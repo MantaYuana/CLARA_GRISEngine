@@ -1,0 +1,82 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap");
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+* {
+  @apply transition-all duration-300;
+}
+
+@theme {
+  --font-poppins: "Poppins", sans-serif !important;
+  --color-primary: #bb11ee !important;
+  --color-secondary: #f0a4fe !important;
+  --color-background: #24212a !important;
+  --color-backgroundBlack: #0b0c11 !important;
+  --color-surface: #1a1721 !important;
+  --color-surfaceLight: #2d2838 !important;
+  --color-border: #3a3444 !important;
+  --color-textPrimary: #f0edf5 !important;
+  --color-textSecondary: #a09aad !important;
+
+  --animate-fadeIn: fadeIn 0.3s ease-out;
+  --animate-slideInLeft: slideInLeft 0.3s ease-out;
+  --animate-slideInRight: slideInRight 0.3s ease-out;
+  --animate-slideUp: slideUp 0.4s ease-out;
+}
+
+.login-card {
+  background: radial-gradient(
+    circle at 50% 0%,
+    #c084fc 0%,
+    #9333ea 5%,
+    #6b21a8 50%,
+    #000000 100%
+  );
+
+  box-shadow:
+    0 10px 40px rgba(147, 51, 234, 0.3),
+    inset 0 0 80px rgba(0, 0, 0, 0.6);
+
+  position: relative;
+  overflow: hidden;
+}
+
+/* Optional glow effect */
+.login-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at top,
+    rgba(255, 255, 255, 0.15),
+    transparent 60%
+  );
+  pointer-events: none;
+}
+
+/* 1. Untuk Browser berbasis Webkit (Chrome, Safari, Edge, Opera) */
+::-webkit-scrollbar {
+  width: 8px; /* Lebar scrollbar vertikal */
+  height: 8px; /* Tinggi scrollbar horizontal */
+}
+
+::-webkit-scrollbar-track {
+  background: transparent; /* Membuat area 'jalan' scrollbar tidak terlihat */
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1); /* Warna thumb tipis & transparan */
+  border-radius: 10px; /* Membuat sudut membulat */
+  border: 2px solid transparent; /* Memberi jarak halus */
+  background-clip: content-box; /* Agar border transparan berfungsi sebagai padding */
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3); /* Lebih terang saat disentuh kursor */
+}
+
+/* 2. Untuk Firefox (Menggunakan properti standar) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
