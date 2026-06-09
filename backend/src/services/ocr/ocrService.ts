@@ -2,11 +2,12 @@
  * ocrService.ts
  * Extracts text from files using:
  *  – Gemini multimodal for images (JPEG, PNG, WebP, etc.)
- *  – Gemini multimodal for PDFs
+ *  – pdf-parse for local PDF text extraction (no API calls)
  * Then applies Indonesian OCR correction logic and segments the text into
  * structured contract clauses.
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { PDFParse } from "pdf-parse";
 import { env } from "../../config/env";
 
 const genAI = new GoogleGenerativeAI(env.GOOGLE_AI_API_KEY);
@@ -229,17 +230,33 @@ export async function extractTextFromImage(
 // PDF OCR
 
 export async function extractTextFromPdf(buffer: Buffer): Promise<string> {
-  const model = genAI.getGenerativeModel({ model: env.GEMINI_MODEL });
-  const result = await model.generateContent([
-    {
-      inlineData: {
-        data: buffer.toString("base64"),
-        mimeType: "application/pdf",
+  let text = "";
+
+  try {
+    const pdf = new PDFParse({ data: new Uint8Array(buffer) });
+    const result = await pdf.getText();
+    text = result.text || "";
+    await pdf.destroy();
+  } catch (err) {
+    console.warn("[OCR] pdf-parse error:", err);
+  }
+
+  // Fallback to Gemini only if pdf-parse fails to extract text
+  if (!text || text.trim().length === 0) {
+    console.warn("[OCR] pdf-parse returned empty text; falling back to Gemini...");
+    const model = genAI.getGenerativeModel({ model: env.GEMINI_MODEL });
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          data: buffer.toString("base64"),
+          mimeType: "application/pdf",
+        },
       },
-    },
-    "Extract all text in this PDF document verbatim, maintain the structure of articles, paragraphs, and headings. Do not add any comments. Output format: raw text only.",
-  ]);
-  const text = result.response.text().trim();
+      "Extract all text in this PDF document verbatim, maintain the structure of articles, paragraphs, and headings. Do not add any comments. Output format: raw text only.",
+    ]);
+    text = result.response.text().trim();
+  }
+
   if (!text) {
     throw new Error("OCR returned no text for the provided PDF.");
   }

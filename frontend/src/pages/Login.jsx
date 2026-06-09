@@ -1,10 +1,20 @@
 import React, { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { FcGoogle } from "react-icons/fc";
 import { LuArrowRightLeft } from "react-icons/lu";
 const apiURL = import.meta.env.VITE_API_URL;
+const AUTH_BYPASS = import.meta.env.VITE_AUTH_BYPASS === "true";
 
 const Login = () => {
+  const navigate = useNavigate();
+
   useEffect(() => {
+    if (AUTH_BYPASS) {
+      localStorage.setItem("token", "demo");
+      navigate("/workspace", { replace: true });
+      return;
+    }
+
     const script = document.createElement("script");
     script.src = "/finisher-header.es5.min.js";
     script.async = true;

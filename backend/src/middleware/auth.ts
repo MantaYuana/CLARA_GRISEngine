@@ -7,6 +7,7 @@
  */
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { env } from "../config/env";
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "change_me_in_production";
 
@@ -26,6 +27,12 @@ declare global {
 }
 
 export function verifyToken(req: Request, res: Response, next: NextFunction): void {
+    if (env.AUTH_BYPASS) {
+        req.user = { userId: env.DEMO_USER_ID, email: env.DEMO_USER_EMAIL, name: env.DEMO_USER_NAME };
+        next();
+        return;
+    }
+
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
         res.status(401).json({ status: "error", code: "UNAUTHORIZED", message: "Missing or malformed Authorization header." });

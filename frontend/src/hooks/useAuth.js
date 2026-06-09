@@ -1,11 +1,21 @@
 import { useEffect, useState, useCallback } from "react";
 import { axiosInstance } from "../lib/axios";
 
+const AUTH_BYPASS = import.meta.env.VITE_AUTH_BYPASS === "true";
+
 export const useAuth = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const getUser = useCallback(async () => {
+    // Local demo bypass: resolve a synthetic user with no token/backend call.
+    if (AUTH_BYPASS) {
+      localStorage.setItem("token", "demo");
+      setUser({ userId: "demo-user", email: "demo@clara.local", name: "Demo User" });
+      setLoading(false);
+      return;
+    }
+
     const token = localStorage.getItem("token");
 
     if (!token) {
@@ -32,9 +42,11 @@ export const useAuth = () => {
   }, []);
 
   const logout = () => {
+    // In demo bypass mode there is no real session to clear; keep the user signed in.
+    if (AUTH_BYPASS) return;
     localStorage.removeItem("token");
     setUser(null);
-    navigate("/login");
+    window.location.href = "/auth";
   };
 
   useEffect(() => {

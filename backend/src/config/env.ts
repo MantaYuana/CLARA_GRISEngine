@@ -55,4 +55,10 @@ export const env = {
 
   // Drafter (Module 5)
   DRAFTER_MIN_CONFIDENCE: parseFloat(process.env.DRAFTER_MIN_CONFIDENCE ?? "0.8"),
+
+  // Local demo bypass — skips OAuth entirely when true
+  AUTH_BYPASS: process.env.AUTH_BYPASS === "true",
+  DEMO_USER_ID: process.env.DEMO_USER_ID ?? "demo-user",
+  DEMO_USER_EMAIL: process.env.DEMO_USER_EMAIL ?? "demo@clara.local",
+  DEMO_USER_NAME: process.env.DEMO_USER_NAME ?? "Demo User",
 };
