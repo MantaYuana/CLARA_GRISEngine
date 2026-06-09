@@ -4,7 +4,6 @@
  */
 import { getSession } from "../../config/neo4j";
 import { embedText } from "../embedding/embeddingService";
-import { TaskType } from "@google/generative-ai";
 
 export interface RetrievalResult {
   id: string;
@@ -20,7 +19,7 @@ export async function denseSearch(
   queryText: string,
   topK = 5,
 ): Promise<RetrievalResult[]> {
-  const queryEmbedding = await embedText(queryText, TaskType.RETRIEVAL_QUERY);
+  const queryEmbedding = await embedText(queryText);
   const session = await getSession();
 
   try {
@@ -64,7 +63,7 @@ export async function storeEmbedding(
   label: string,
   content: string,
 ): Promise<void> {
-  const embedding = await embedText(content, TaskType.RETRIEVAL_DOCUMENT);
+  const embedding = await embedText(content);
   const session = await getSession();
   try {
     await session.run(`MATCH (n:${label} { id: $nodeId }) SET n.embedding = $embedding`, {

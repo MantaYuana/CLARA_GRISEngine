@@ -23,7 +23,7 @@ export const env = {
   // Google AI / Gemini
   GOOGLE_AI_API_KEY: requireEnv("GOOGLE_AI_API_KEY"),
   GEMINI_MODEL: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
-  EMBEDDING_MODEL: process.env.EMBEDDING_MODEL ?? "gemini-embedding-001",
+  EMBEDDING_MODEL: process.env.EMBEDDING_MODEL ?? "Xenova/multilingual-e5-base",
   EMBEDDING_DIMENSION: parseInt(process.env.EMBEDDING_DIMENSION ?? "768", 10),
 
   // Reasoning pipeline

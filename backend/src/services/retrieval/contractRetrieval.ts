@@ -6,7 +6,6 @@
  */
 import { getSession } from "../../config/neo4j";
 import { embedText } from "../embedding/embeddingService";
-import { TaskType } from "@google/generative-ai";
 import type { RetrievalResult } from "./denseRetrieval";
 
 export async function contractRetrieval(
@@ -20,7 +19,7 @@ export async function contractRetrieval(
     // Strategy 1: Vector similarity search (preferred)
     let vectorResults: RetrievalResult[] = [];
     try {
-      const queryEmbedding = await embedText(queryText, TaskType.RETRIEVAL_QUERY);
+      const queryEmbedding = await embedText(queryText);
       const result = await session.run(
         `
         CALL db.index.vector.queryNodes('contract_clause_embedding_idx', $topK, $embedding)

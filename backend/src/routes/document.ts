@@ -16,7 +16,6 @@ import { processUploadedFile } from "../services/ocr/ocrService";
 import { embedText } from "../services/embedding/embeddingService";
 import { runGuardrailChecks } from "../services/guardrail/guardrailService";
 import { getSession } from "../config/neo4j";
-import { TaskType } from "@google/generative-ai";
 import { success, error as apiError } from "../utils/response";
 import { verifyToken } from "../middleware/auth";
 import { getUserDashboard } from "../services/dashboard/dashboardService";
@@ -89,7 +88,7 @@ async function storeClauses(
         for (const clause of clauses) {
             let embedding: number[] = [];
             try {
-                embedding = await embedText(clause.content || clause.header, TaskType.RETRIEVAL_DOCUMENT);
+                embedding = await embedText(clause.content || clause.header);
             } catch {
                 // Embedding failure doesn't block storage
             }

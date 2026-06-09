@@ -13,7 +13,6 @@ import { processUploadedFile } from "../services/ocr/ocrService";
 import { runGuardrailChecks } from "../services/guardrail/guardrailService";
 import { embedText } from "../services/embedding/embeddingService";
 import { getSession } from "../config/neo4j";
-import { TaskType } from "@google/generative-ai";
 import type { AnalysisJob } from "../queues/analysisQueue";
 
 async function storeClauses(
@@ -26,7 +25,7 @@ async function storeClauses(
         for (const clause of clauses) {
             let embedding: number[] = [];
             try {
-                embedding = await embedText(clause.content || clause.header, TaskType.RETRIEVAL_DOCUMENT);
+                embedding = await embedText(clause.content || clause.header);
             } catch { /* skip embedding failures */ }
 
             await session.run(

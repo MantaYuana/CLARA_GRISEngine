@@ -25,7 +25,6 @@ import { runGuardrailChecks } from "../services/guardrail/guardrailService";
 import { hybridRetrieval } from "../services/retrieval/hybridRetrieval";
 import { reason } from "../services/reasoning/reasoningService";
 import { getSession } from "../config/neo4j";
-import { TaskType } from "@google/generative-ai";
 import { success, error as apiError } from "../utils/response";
 
 const router = Router();
@@ -57,7 +56,6 @@ async function storeClauses(
       try {
         embedding = await embedText(
           clause.content || clause.header,
-          TaskType.RETRIEVAL_DOCUMENT,
         );
       } catch {
         // Skip embedding if API fails; clause still stored without vector
