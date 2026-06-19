@@ -1,4 +1,5 @@
 import { axiosInstance } from "../lib/axios";
+import { normalizeTrace } from "./traceService";
 
 const getAuthHeader = () => {
   const token = localStorage.getItem("token");
@@ -56,7 +57,9 @@ export const sendMessage = async ({
 
   const citations = data?.citations ?? data?.sources ?? data?.references ?? [];
 
-  return { content, confidenceScore, citations };
+  const trace = normalizeTrace(data?.trace ?? null);
+
+  return { content, confidenceScore, citations, trace };
 };
 
 /**

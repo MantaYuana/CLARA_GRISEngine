@@ -13,6 +13,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../../config/env";
 import type { RetrievalResult } from "../retrieval/denseRetrieval";
+import type { RetrievalTrace } from "../retrieval/retrievalTrace";
 
 const genAI = new GoogleGenerativeAI(env.GOOGLE_AI_API_KEY);
 
@@ -164,11 +165,15 @@ function computeEntropy(paths: string[]): number {
   return Math.min(avgVariance * 500, 1.0);
 }
 
-// Confidence level mapping 
+// Confidence level mapping
 interface ConfidenceResult {
   score: number;
   level: ConfidenceLevel;
   label: string;
+  /** Citation reduction applied to raw entropy before thresholding. */
+  citationBonus: number;
+  /** entropy after subtracting citationBonus (clamped to 0). */
+  adjustedEntropy: number;
 }
 
 function mapConfidenceLevel(entropy: number, citationCount: number): ConfidenceResult {
@@ -182,6 +187,8 @@ function mapConfidenceLevel(entropy: number, citationCount: number): ConfidenceR
       level: "green",
       label:
         "High – Answer is based on clear and consistent statutory text.",
+      citationBonus,
+      adjustedEntropy,
     };
   } else if (adjustedEntropy < 0.55) {
     return {
@@ -189,6 +196,8 @@ function mapConfidenceLevel(entropy: number, citationCount: number): ConfidenceR
       level: "yellow",
       label:
         "Medium – Answer is interpretive. Further consultation with a legal expert is recommended.",
+      citationBonus,
+      adjustedEntropy,
     };
   } else {
     return {
@@ -196,6 +205,8 @@ function mapConfidenceLevel(entropy: number, citationCount: number): ConfidenceR
       level: "red",
       label:
         "Low – Novel issue or conflicting legal sources. Consultation with a lawyer is mandatory.",
+      citationBonus,
+      adjustedEntropy,
     };
   }
 }
@@ -206,6 +217,7 @@ export async function reason(
   question: string,
   context: RetrievalResult[],
   history?: { role: string; content: string }[],
+  traceSink?: Partial<RetrievalTrace>,
 ): Promise<ReasoningResult> {
   const n = parseInt(String(env.REASONING_PATHS ?? 3), 10);
 
@@ -222,11 +234,25 @@ export async function reason(
 
   const prompt = `${historyPrefix}LEGAL CONTEXT:\n${contextText}\n\nQUESTION: ${question}`;
 
+  // Read temperature constants once (same values selfConsistencyLoop uses internally)
+  const tempLow = parseFloat(String(env.TEMPERATURE_LOW ?? 0.1));
+  const tempHigh = parseFloat(String(env.TEMPERATURE_HIGH ?? 0.7));
+
   // Run self-consistency loop
   const paths = await selfConsistencyLoop(prompt, n);
 
   // Graceful fallback: if all paths failed
   if (paths.length === 0) {
+    if (traceSink !== undefined) {
+      traceSink.reasoning = {
+        paths: [],
+        entropy: 1.0,
+        citationBonus: 0,
+        adjustedEntropy: 1.0,
+        confidence: 0,
+        confidenceLevel: "red",
+      };
+    }
     return {
       answer:
         "Sorry, an error occurred while processing your question. Please try again.",
@@ -255,6 +281,25 @@ export async function reason(
   const entropy = computeEntropy(paths);
   const totalCitations = countCitations(bestPath);
   const conf = mapConfidenceLevel(entropy, totalCitations);
+
+  // Populate trace sink if provided — mirrors exactly the values already computed above.
+  // path index 0 ran at TEMPERATURE_LOW; all subsequent paths at TEMPERATURE_HIGH.
+  // Note: `paths` here contains only the non-empty results from selfConsistencyLoop,
+  // so index within this array maps directly to the original call order (0 = low temp).
+  if (traceSink !== undefined) {
+    traceSink.reasoning = {
+      paths: paths.map((text, idx) => ({
+        index: idx,
+        temperature: idx === 0 ? tempLow : tempHigh,
+        citationCount: countCitations(text),
+      })),
+      entropy,
+      citationBonus: conf.citationBonus,
+      adjustedEntropy: conf.adjustedEntropy,
+      confidence: conf.score,
+      confidenceLevel: conf.level,
+    };
+  }
 
   // Filter the AI's answer against the RAG context to build a reliable citation list.
   // We prioritize citations that genuinely came from Neo4j (RAG).

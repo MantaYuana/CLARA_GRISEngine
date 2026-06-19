@@ -45,8 +45,10 @@ export const env = {
   UPLOAD_DIR: process.env.UPLOAD_DIR ?? "./uploads",
 
   // OAuth + JWT (Module 2)
-  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ?? process.env.OAUTH_GOOGLE_CLIENT_ID ?? "",
-  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ?? process.env.OAUTH_GOOGLE_CLIENT_SECRET ?? "",
+  GOOGLE_CLIENT_ID:
+    process.env.GOOGLE_CLIENT_ID ?? process.env.OAUTH_GOOGLE_CLIENT_ID ?? "",
+  GOOGLE_CLIENT_SECRET:
+    process.env.GOOGLE_CLIENT_SECRET ?? process.env.OAUTH_GOOGLE_CLIENT_SECRET ?? "",
   JWT_SECRET: process.env.JWT_SECRET ?? "change_me_in_production",
   FRONTEND_URL: process.env.FRONTEND_URL ?? "http://localhost:5173",
 
@@ -61,4 +63,7 @@ export const env = {
   DEMO_USER_ID: process.env.DEMO_USER_ID ?? "demo-user",
   DEMO_USER_EMAIL: process.env.DEMO_USER_EMAIL ?? "demo@clara.local",
   DEMO_USER_NAME: process.env.DEMO_USER_NAME ?? "Demo User",
+
+  // Retrieval Trace Visualization — set TRACE_ENABLED=false to omit trace from API responses
+  TRACE_ENABLED: process.env.TRACE_ENABLED !== "false",
 };

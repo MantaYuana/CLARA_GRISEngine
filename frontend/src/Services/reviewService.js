@@ -1,4 +1,5 @@
 import { axiosInstance } from "../lib/axios";
+import { normalizeTrace } from "./traceService";
 
 const getAuthHeader = () => {
   const token = localStorage.getItem("token");
@@ -123,11 +124,13 @@ export const reviewContract = async ({ file, question }) => {
 
   const citations = normalizeCitations(phase2Data?.citations ?? []);
 
+  const trace = normalizeTrace(phase2Data?.trace ?? null);
+
   console.log("[reviewService] Parsed →", {
     confidenceScore,
     label,
     citationCount: citations.length,
   });
 
-  return { content, confidenceScore, citations, label, rationale };
+  return { content, confidenceScore, citations, label, rationale, trace };
 };

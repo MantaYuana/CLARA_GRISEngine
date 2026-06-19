@@ -17,9 +17,12 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { hybridRetrieval } from "../services/retrieval/hybridRetrieval";
 import { reason } from "../services/reasoning/reasoningService";
+import { fetchSubgraphEdges } from "../services/retrieval/graphContext";
+import type { RetrievalTrace } from "../services/retrieval/retrievalTrace";
 import { getSession } from "../config/neo4j";
 import { v4 as uuidv4 } from "uuid";
 import { success, error } from "../utils/response";
+import { env } from "../config/env";
 
 // --- Pindahkan import ke paling atas ---
 import {
@@ -171,7 +174,8 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     );
 
     // 2. Hybrid retrieval (vector + BM25 + symbolic + contract clauses)
-    const context = await hybridRetrieval(question, document_id);
+    const trace: Partial<RetrievalTrace> = { query: question };
+    const context = await hybridRetrieval(question, document_id, 8, trace);
 
     let contextSource: "retrieval" | "raw_text" | "none" = "retrieval";
 
@@ -203,7 +207,12 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       }
     }
 
-    const reasoning = await reason(question, context, extraHistory);
+    if (trace.graph) {
+      trace.graph.edges = await fetchSubgraphEdges(context.map((r) => r.id)).catch(() => []);
+    }
+
+    const reasoning = await reason(question, context, extraHistory, trace);
+    trace.contextSource = contextSource;
 
     // 4. Save assistant response
     await saveChatMessage(
@@ -225,6 +234,7 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
         context_count: context.length,
         context_source: contextSource,
         language: "id",
+        trace: env.TRACE_ENABLED ? (trace as RetrievalTrace) : undefined,
       }),
     );
   } catch (err: unknown) {

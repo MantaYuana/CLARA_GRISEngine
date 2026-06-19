@@ -63,9 +63,7 @@ const useChat = () => {
     // ── Validation ───────────────────────────────────────────────
     if (mode === "review") {
       if (!selectedFile) {
-        toast.error(
-          "Review mode: please select one file from the Sources panel first.",
-        );
+        toast.error("Review mode: please select one file from the Sources panel first.");
         return;
       }
       if (!message?.trim()) {
@@ -75,9 +73,7 @@ const useChat = () => {
     }
 
     if (mode === "draft" && !message?.trim()) {
-      toast.error(
-        "Draft mode: please describe the contract you want to create.",
-      );
+      toast.error("Draft mode: please describe the contract you want to create.");
       return;
     }
 
@@ -102,7 +98,7 @@ const useChat = () => {
 
     try {
       if (mode === "review") {
-        const { content, confidenceScore, citations, label, rationale } =
+        const { content, confidenceScore, citations, label, rationale, trace } =
           await reviewContract({
             file: selectedFile,
             question: message.trim(),
@@ -114,6 +110,7 @@ const useChat = () => {
           citations: citations ?? [],
           label: label ?? null,
           rationale: rationale ?? null,
+          trace: trace ?? null,
         });
       } else if (mode === "draft") {
         const history = buildDraftHistory();
@@ -142,7 +139,7 @@ const useChat = () => {
           pdfBase64: pdfBase64 ?? null,
         });
       } else {
-        const { content, confidenceScore, citations } = await sendMessage({
+        const { content, confidenceScore, citations, trace } = await sendMessage({
           message,
           fileIds: selectedSourceIds,
           mode,
@@ -152,6 +149,7 @@ const useChat = () => {
         addMessage("assistant", content, {
           confidenceScore: confidenceScore ?? null,
           citations: citations ?? [],
+          trace: trace ?? null,
         });
       }
     } catch (err) {

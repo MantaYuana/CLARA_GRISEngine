@@ -23,9 +23,12 @@ import { processUploadedFile } from "../services/ocr/ocrService";
 import { embedText } from "../services/embedding/embeddingService";
 import { runGuardrailChecks } from "../services/guardrail/guardrailService";
 import { hybridRetrieval } from "../services/retrieval/hybridRetrieval";
+import { fetchSubgraphEdges } from "../services/retrieval/graphContext";
+import type { RetrievalTrace } from "../services/retrieval/retrievalTrace";
 import { reason } from "../services/reasoning/reasoningService";
 import { getSession } from "../config/neo4j";
 import { success, error as apiError } from "../utils/response";
+import { env } from "../config/env";
 
 const router = Router();
 const upload = multer({
@@ -344,13 +347,18 @@ router.post(
       const { saveChatMessage } = await import("../services/chat/chatService");
       await saveChatMessage(session_id, userId, "contract", "user", resolvedQuestion, documentId);
 
+      const trace: Partial<RetrievalTrace> = { query: resolvedQuestion };
       const [guardrail, context] = await Promise.all([
         runGuardrailChecks(contractText),
-        hybridRetrieval(resolvedQuestion),
+        hybridRetrieval(resolvedQuestion, undefined, 8, trace),
       ]);
+      if (trace.graph) {
+        trace.graph.edges = await fetchSubgraphEdges(context.map((r) => r.id)).catch(() => []);
+      }
       const reasoning = await reason(resolvedQuestion, context, [
         { role: "user", content: `Contract to analyze:\n${contractText}` },
-      ]);
+      ], trace);
+      trace.contextSource = context.length > 0 ? "retrieval" : "raw_text";
 
       // 2. Save AI response
       await saveChatMessage(session_id, userId, "contract", "model", reasoning.answer, documentId);
@@ -383,6 +391,7 @@ router.post(
             reasoning_paths_generated: 3,
           },
           language: "id",
+          trace: env.TRACE_ENABLED ? (trace as RetrievalTrace) : undefined,
         }),
       );
     } catch (err: unknown) {
@@ -493,11 +502,25 @@ router.post("/validate", async (req: Request, res: Response): Promise<void> => {
       corrected_variables,
     );
 
-    const [context] = await Promise.all([hybridRetrieval(question, document_id)]);
-
-    const reasoning = await reason(question, context, [
-      { role: "user", content: `Kontrak untuk dianalisis:\n${raw_text}` },
+    const trace: Partial<RetrievalTrace> = { query: question };
+    const [context] = await Promise.all([
+      hybridRetrieval(question, document_id, 8, trace),
     ]);
+
+    if (trace.graph) {
+      trace.graph.edges = await fetchSubgraphEdges(
+        context.map((r) => r.id),
+      ).catch(() => []);
+    }
+
+    const reasoning = await reason(
+      question,
+      context,
+      [{ role: "user", content: `Kontrak untuk dianalisis:\n${raw_text}` }],
+      trace,
+    );
+    // Contract text is always injected via history; retrieval is the legal-context source.
+    trace.contextSource = context.length > 0 ? "retrieval" : "raw_text";
 
     res.json(
       success({
@@ -507,6 +530,7 @@ router.post("/validate", async (req: Request, res: Response): Promise<void> => {
         answer: reasoning.answer,
         confidence: reasoning.confidence,
         citations: reasoning.citations,
+        trace: env.TRACE_ENABLED ? (trace as RetrievalTrace) : undefined,
         guardrail: {
           has_violations: !guardrail.is_safe,
           violation_count: guardrail.critical_violations.length,

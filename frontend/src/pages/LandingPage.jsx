@@ -263,7 +263,7 @@ export default function LandingPage() {
           <TypewriterText
             text="AI Reasoning Assistant"
             delay={0.9}
-            className="bg-linear-to-r from-purple-400 via-purple-300 to-purple-500 bg-clip-text text-transparent"
+            className="text-white"
           />
         </motion.h1>
 
