@@ -16,12 +16,7 @@ const DUMMY_DOCUMENT_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
  * - citations       : array of citation objects (or [])
  */
 // 1. Tambahkan session_id di parameter
-export const sendMessage = async ({
-  message,
-  fileIds = [],
-  mode,
-  session_id,
-}) => {
+export const sendMessage = async ({ message, fileIds = [], mode, session_id }) => {
   const payload = {
     question: message,
   };
@@ -33,6 +28,12 @@ export const sendMessage = async ({
   // 2. Masukkan session_id ke dalam payload jika ada
   if (session_id) {
     payload.session_id = session_id;
+  }
+
+  // 3. Kirim answer_mode (raw|natural) dari localStorage jika tersedia
+  const answerMode = localStorage.getItem("clara_answer_mode");
+  if (answerMode) {
+    payload.answer_mode = answerMode;
   }
 
   const response = await axiosInstance.post("query", payload, {
@@ -95,7 +96,7 @@ export const fetchUserSessions = async () => {
       },
     });
 
-    return response.data.data; 
+    return response.data.data;
   } catch (error) {
     console.error("Failed to fetch user sessions:", error);
     throw error;

@@ -8,7 +8,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "init-schema": "ts-node src/scripts/initSchema.ts",
+    "seed:knowledge": "ts-node src/scripts/seedKnowledge.ts",
     "seed:pdf": "ts-node src/scripts/seedFromPdf.ts",
+    "reembed": "ts-node src/scripts/reembedKnowledge.ts",
+    "reprocess-docs": "ts-node src/scripts/reprocessDocuments.ts",
     "test": "node node_modules/jest/bin/jest.js"
   },
   "dependencies": {

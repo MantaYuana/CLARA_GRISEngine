@@ -21,7 +21,7 @@ export interface TraceLegItem {
   title: string;
   source: string;
   score: number; // leg-native score (dense: cosine 0–1, bm25: normalized, symbolic: fixed)
-  rank: number;  // 0-based rank within this leg (best = 0)
+  rank: number; // 0-based rank within this leg (best = 0)
 }
 
 /** A single retrieval leg's contribution. */
@@ -34,8 +34,8 @@ export interface TraceLeg {
 /** Per-leg RRF contribution for one fused item. */
 export interface TraceFusionContribution {
   leg: LegName;
-  rank: number;      // rank of this item within that leg
-  weighted: number;  // (1 / (rrfK + rank + 1)) * legWeight
+  rank: number; // rank of this item within that leg
+  weighted: number; // (1 / (rrfK + rank + 1)) * legWeight
 }
 
 /** One item after Reciprocal Rank Fusion. */
@@ -43,7 +43,7 @@ export interface TraceFusionItem {
   id: string;
   title: string;
   contributions: TraceFusionContribution[];
-  total: number;     // sum of weighted contributions
+  total: number; // sum of weighted contributions
   finalRank: number; // 0-based rank in the merged list
 }
 
@@ -55,11 +55,11 @@ export interface TraceFusion {
 /** A node in the knowledge-graph subgraph view. */
 export interface TraceGraphNode {
   id: string;
-  label: string;       // Neo4j label: Article | LegalConcept | ContractClause | ...
+  label: string; // Neo4j label: Article | LegalConcept | ContractClause | ...
   title: string;
   source: string;
-  foundBy: LegName[];  // which legs surfaced this node
-  fusedScore: number;  // its RRF total
+  foundBy: LegName[]; // which legs surfaced this node
+  fusedScore: number; // its RRF total
 }
 
 /** A real Neo4j relationship between two retrieved nodes. */
@@ -83,18 +83,34 @@ export interface TraceReasoningPath {
 
 export interface TraceReasoning {
   paths: TraceReasoningPath[];
-  entropy: number;         // raw token-variance / JS-divergence proxy
-  citationBonus: number;
-  adjustedEntropy: number;
-  confidence: number;      // 0–1
+  agreement: number; // mean pairwise cosine of path embeddings, 0–1
+  groundedness: number; // fraction of answer claims supported by sources, 0–1
+  unsupportedClaims: string[]; // claims the verifier could not support
+  gated: boolean; // true when groundedness < floor forced RED
+  confidence: number; // 0–1 final score
   confidenceLevel: "green" | "yellow" | "red";
+}
+
+export type TraceMode = "hybrid" | "structural";
+export type StructuralKind = "count" | "fetch" | "list";
+
+/** Structural (deterministic) answer trace — no legs / RRF / embeddings. */
+export interface TraceStructural {
+  kind: StructuralKind;
+  pasalNumber?: number;
+  ayatNumber?: number;
+  matched: { pasal_number: number; title: string }[];
+  source: string; // e.g. "Struktur Dokumen"
 }
 
 export interface RetrievalTrace {
   query: string;
+  mode: TraceMode; // discriminator the drawer branches on
+  answerMode?: "raw" | "natural";
   legs: TraceLeg[];
   fusion: TraceFusion;
   graph: TraceGraph;
-  reasoning: TraceReasoning;
-  contextSource: "retrieval" | "raw_text" | "none";
+  structural?: TraceStructural;
+  reasoning?: TraceReasoning; // absent for structural "raw" answers
+  contextSource: "retrieval" | "raw_text" | "none" | "document_structure";
 }

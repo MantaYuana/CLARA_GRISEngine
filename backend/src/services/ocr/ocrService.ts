@@ -14,10 +14,18 @@ const genAI = new GoogleGenerativeAI(env.GOOGLE_AI_API_KEY);
 
 // Types
 
+export interface Ayat {
+  number: number;
+  text: string;
+}
+
 export interface Clause {
   index: number;
   header: string;
+  title: string; // heading line(s) after "Pasal N"
+  pasal_number: number | null;
   content: string;
+  ayat: Ayat[];
   content_preview: string; // first 200 chars
   pasal_references: string[]; // e.g. ["Pasal 59", "Pasal 156"]
 }
@@ -35,16 +43,16 @@ export interface OcrResult {
  * and the guardrail service (deterministic limit checks).
  */
 export interface NumericVariables {
-  interest_percent_per_month?: number;   // bunga per bulan
-  penalty_percent_per_month?: number;    // denda / penalti per bulan
+  interest_percent_per_month?: number; // bunga per bulan
+  penalty_percent_per_month?: number; // denda / penalti per bulan
   late_interest_percent_per_day?: number; // bunga keterlambatan per hari
-  retention_percent?: number;            // retensi / potongan jaminan
-  dp_percent?: number;                   // uang muka / DP
-  penalty_lump_sum_idr?: number;         // denda nominal (Rp)
-  pkwt_duration_years?: number;          // durasi PKWT dalam tahun
+  retention_percent?: number; // retensi / potongan jaminan
+  dp_percent?: number; // uang muka / DP
+  penalty_lump_sum_idr?: number; // denda nominal (Rp)
+  pkwt_duration_years?: number; // durasi PKWT dalam tahun
 }
 
-// Indonesian OCR Correction Map 
+// Indonesian OCR Correction Map
 
 /**
  * Apply common Indonesian-language OCR corrections.
@@ -59,7 +67,7 @@ export interface NumericVariables {
 export function applyOcrCorrections(text: string): string {
   let t = text;
 
-  // Legal term prefix fixes (must come first) 
+  // Legal term prefix fixes (must come first)
   // Pasal corruption: Pa5al, Pa$al, Pas@l, PasaI (capital-I for l)
   t = t.replace(/Pa[s5$][a@]l\b/gi, "Pasal");
   t = t.replace(/\bPasaI\b/g, "Pasal"); // capital-I suffix
@@ -77,7 +85,15 @@ export function applyOcrCorrections(text: string): string {
     // Apply only when the result forms a plausible Indonesian token
     const candidate = pre + "m" + suf;
     const indonesianTrigrams = [
-      "mem", "pem", "mer", "per", "diam", "umum", "kam", "jam", "mam"
+      "mem",
+      "pem",
+      "mer",
+      "per",
+      "diam",
+      "umum",
+      "kam",
+      "jam",
+      "mam",
     ];
     if (indonesianTrigrams.some((tri) => candidate.includes(tri))) {
       return candidate;
@@ -141,43 +157,34 @@ export function extractNumericVariables(text: string): NumericVariables {
     /bunga\s+(\d+(?:[.,]\d+)?)\s*(?:%|persen)\s*(?:per\s+bulan|\/bulan|perbulan)/i,
   );
   if (interestMatch)
-    result.interest_percent_per_month = parseFloat(
-      interestMatch[1].replace(",", "."),
-    );
+    result.interest_percent_per_month = parseFloat(interestMatch[1].replace(",", "."));
 
   // Penalty rate per month: "denda 10% per bulan"
   const penaltyMatch = text.match(
     /(?:denda|penalti|penalty)\s+(\d+(?:[.,]\d+)?)\s*(?:%|persen)\s*(?:per\s+bulan|\/bulan|perbulan)/i,
   );
   if (penaltyMatch)
-    result.penalty_percent_per_month = parseFloat(
-      penaltyMatch[1].replace(",", "."),
-    );
+    result.penalty_percent_per_month = parseFloat(penaltyMatch[1].replace(",", "."));
 
   // Late-payment interest per day: "bunga keterlambatan 0,5% per hari"
   const lateDayMatch = text.match(
     /bunga\s+keterlambatan\s+(\d+(?:[.,]\d+)?)\s*(?:%|persen)\s*(?:per\s+hari|\/hari|perhari)/i,
   );
   if (lateDayMatch)
-    result.late_interest_percent_per_day = parseFloat(
-      lateDayMatch[1].replace(",", "."),
-    );
+    result.late_interest_percent_per_day = parseFloat(lateDayMatch[1].replace(",", "."));
 
   // Retention / withholding: "retensi 5%" / "potongan jaminan 5%"
   const retentionMatch = text.match(
     /(?:retensi|potongan\s+jaminan)\s+(?:sebesar\s+)?(\d+(?:[.,]\d+)?)\s*(?:%|persen)/i,
   );
   if (retentionMatch)
-    result.retention_percent = parseFloat(
-      retentionMatch[1].replace(",", "."),
-    );
+    result.retention_percent = parseFloat(retentionMatch[1].replace(",", "."));
 
   // Down payment: "uang muka 30%" / "DP 30%"
   const dpMatch = text.match(
     /(?:uang\s+muka|down\s+payment|DP)\s+(?:sebesar\s+)?(\d+(?:[.,]\d+)?)\s*(?:%|persen)/i,
   );
-  if (dpMatch)
-    result.dp_percent = parseFloat(dpMatch[1].replace(",", "."));
+  if (dpMatch) result.dp_percent = parseFloat(dpMatch[1].replace(",", "."));
 
   // Lump-sum penalty (nominal IDR): "denda sebesar Rp 50.000.000" / "denda Rp50juta"
   const lumpSumMatch = text.match(
@@ -194,12 +201,10 @@ export function extractNumericVariables(text: string): NumericVariables {
 
   // PKWT duration: "PKWT selama 3 tahun" / "PKWT 36 bulan"
   const pkwtYearMatch = text.match(/PKWT\s+selama\s+(\d+)\s+tahun/i);
-  if (pkwtYearMatch)
-    result.pkwt_duration_years = parseInt(pkwtYearMatch[1], 10);
+  if (pkwtYearMatch) result.pkwt_duration_years = parseInt(pkwtYearMatch[1], 10);
 
   const pkwtMonthMatch = text.match(/PKWT\s+selama\s+(\d+)\s+bulan/i);
-  if (pkwtMonthMatch)
-    result.pkwt_duration_years = parseInt(pkwtMonthMatch[1], 10) / 12;
+  if (pkwtMonthMatch) result.pkwt_duration_years = parseInt(pkwtMonthMatch[1], 10) / 12;
 
   return result;
 }
@@ -265,52 +270,65 @@ export async function extractTextFromPdf(buffer: Buffer): Promise<string> {
 
 // Clause Segmentation
 
+// Structural headers ONLY — note: no bare "N." and no "Ayat N" here.
+const STRUCTURAL_HEADER =
+  /^(BAB\s+[IVXLCDM\d]+|BAGIAN\s+\w+|KLAUSULA\s+\d+|PASAL\s+\d+)\b/i;
+const PASAL_HEADER = /^PASAL\s+(\d+)\b/i;
+// Ayat line inside a Pasal: "1. ...", "(1) ...", "Ayat (1) ..."
+const AYAT_LINE = /^(?:Ayat\s+)?\(?(\d+)\)?[.)]\s+(.*)$/i;
+
 /**
  * Split raw OCR text into structured contract clauses.
- * Segments on common Indonesian legal document markers:
- *   BAB I, BAB II …
- *   Pasal 1, Pasal 2 …
- *   BAGIAN KESATU, …
- *   KLAUSULA 1, …
- *   Ayat (1) …
- *   Numbered items "1. [Capital letter]"
+ * Segments on Pasal-level structural headers only (BAB, BAGIAN, KLAUSULA, PASAL),
+ * never on numbered ayat lines — so "5. ..." inside Pasal 2 is never mistaken
+ * for the start of Pasal 5. Ayat are parsed and attached to their parent Pasal.
  */
 export function segmentClauses(rawText: string): Clause[] {
-  const headerPattern =
-    /^(BAB\s+[IVXLCDM\d]+|Pasal\s+\d+|BAGIAN\s+\w+|KLAUSULA\s+\d+|Ayat\s+\d+|\(\d+\)\s+[A-Z]|\d+\.\s+[A-Z])/im;
+  const lines = rawText
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
 
-  const lines = rawText.split("\n");
-  const segments: { header: string; lines: string[] }[] = [];
-  let current: { header: string; lines: string[] } | null = null;
+  const segments: { header: string; pasal: number | null; body: string[] }[] = [];
+  let current: { header: string; pasal: number | null; body: string[] } | null = null;
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    if (headerPattern.test(trimmed)) {
+    if (STRUCTURAL_HEADER.test(line)) {
       if (current) segments.push(current);
-      current = { header: trimmed, lines: [] };
+      const m = line.match(PASAL_HEADER);
+      current = { header: line, pasal: m ? parseInt(m[1], 10) : null, body: [] };
     } else {
-      if (!current) current = { header: "Opening", lines: [] };
-      current.lines.push(trimmed);
+      if (!current) current = { header: "Pembukaan", pasal: null, body: [] };
+      current.body.push(line);
     }
   }
   if (current) segments.push(current);
-
-  // If no segments found (plain paragraph text), treat whole text as one clause
   if (segments.length === 0) {
-    segments.push({ header: "Contract Text", lines: [rawText] });
+    segments.push({ header: "Teks Kontrak", pasal: null, body: [rawText] });
   }
 
   return segments.map((seg, idx) => {
-    const content = seg.lines.join("\n").trim();
+    // First non-ayat body line(s) before the first ayat = the title.
+    const firstAyatIdx = seg.body.findIndex((l) => AYAT_LINE.test(l));
+    const titleLines = firstAyatIdx === -1 ? seg.body : seg.body.slice(0, firstAyatIdx);
+    const title = titleLines.join(" ").trim() || seg.header;
+
+    const ayat: Ayat[] = [];
+    for (const l of seg.body) {
+      const m = l.match(AYAT_LINE);
+      if (m) ayat.push({ number: parseInt(m[1], 10), text: m[2].trim() });
+    }
+
+    const content = seg.body.join("\n").trim();
     const pasalMatches = content.match(/Pasal\s+\d+/gi) ?? [];
     return {
       index: idx + 1,
       header: seg.header,
+      title,
+      pasal_number: seg.pasal,
       content,
-      content_preview:
-        content.slice(0, 200) + (content.length > 200 ? "…" : ""),
+      ayat,
+      content_preview: content.slice(0, 200) + (content.length > 200 ? "…" : ""),
       pasal_references: [...new Set(pasalMatches)],
     };
   });

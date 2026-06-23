@@ -15,8 +15,7 @@
  */
 import { Router, Request, Response } from "express";
 import { z } from "zod";
-import { hybridRetrieval } from "../services/retrieval/hybridRetrieval";
-import { reason } from "../services/reasoning/reasoningService";
+import { answerQuestion } from "../services/reasoning/answerService";
 import { fetchSubgraphEdges } from "../services/retrieval/graphContext";
 import type { RetrievalTrace } from "../services/retrieval/retrievalTrace";
 import { getSession } from "../config/neo4j";
@@ -25,10 +24,7 @@ import { success, error } from "../utils/response";
 import { env } from "../config/env";
 
 // --- Pindahkan import ke paling atas ---
-import {
-  getSessionHistory,
-  saveChatMessage,
-} from "../services/chat/chatService";
+import { getSessionHistory, saveChatMessage } from "../services/chat/chatService";
 
 const router = Router();
 
@@ -37,33 +33,11 @@ const QuerySchema = z.object({
   document_id: z.string().uuid().optional(),
   session_id: z.string().optional(),
   history: z
-    .array(
-      z.object({ role: z.enum(["user", "assistant"]), content: z.string() }),
-    )
+    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() }))
     .optional()
     .default([]),
+  answer_mode: z.enum(["raw", "natural"]).optional(),
 });
-
-// --- FUNGSI INI DIKEMBALIKAN (JANGAN DIHAPUS) ---
-async function fetchDocumentText(documentId: string): Promise<string | null> {
-  const session = await getSession();
-  try {
-    const result = await session.run(
-      `MATCH (d:Document { id: $documentId })
-       RETURN d.raw_text AS raw_text, d.filename AS filename
-       LIMIT 1`,
-      { documentId },
-    );
-    if (result.records.length === 0) return null;
-    const rawText = result.records[0].get("raw_text") as string | null;
-    return rawText ?? null;
-  } catch {
-    return null;
-  } finally {
-    await session.close();
-  }
-}
-// ------------------------------------------------
 
 /**
  * @swagger
@@ -144,15 +118,9 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  const {
-    question,
-    document_id,
-    history,
-    session_id: req_session_id,
-  } = parsed.data;
+  const { question, document_id, history, session_id: req_session_id } = parsed.data;
   const userId =
-    (req as Request & { user?: { userId: string } }).user?.userId ??
-    "anonymous";
+    (req as Request & { user?: { userId: string } }).user?.userId ?? "anonymous";
   const session_id = req_session_id ?? uuidv4();
 
   try {
@@ -164,24 +132,13 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       : ((historyData as any).history ?? []);
 
     // 1. Save user's question immediately
-    await saveChatMessage(
-      session_id,
-      userId,
-      "query",
-      "user",
-      question,
-      document_id,
-    );
+    await saveChatMessage(session_id, userId, "query", "user", question, document_id);
 
-    // 2. Hybrid retrieval (vector + BM25 + symbolic + contract clauses)
+    // 2. Combine frontend history with stored history and format for Gemini reasoning
     const trace: Partial<RetrievalTrace> = { query: question };
-    const context = await hybridRetrieval(question, document_id, 8, trace);
 
-    let contextSource: "retrieval" | "raw_text" | "none" = "retrieval";
-
-    // Combine frontend history with stored history and format for Gemini reasoning
     const baseHistory = storedHistory.length > 0 ? storedHistory : history;
-    let extraHistory = baseHistory.map((h: any) => ({
+    const extraHistory = baseHistory.map((h: any) => ({
       role:
         h.role === "assistant" || h.role === "model"
           ? ("model" as const)
@@ -189,30 +146,21 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       content: h.content,
     }));
 
-    // 3. If document_id is provided but context is empty → inject raw_text directly
-    if (document_id && context.length === 0) {
-      const rawText = await fetchDocumentText(document_id);
-      if (rawText) {
-        // Prepend document content as a system-level message in the history
-        extraHistory = [
-          {
-            role: "user",
-            content: `Here is the content of the uploaded document (document_id: ${document_id}):\n\n${rawText}\n\n---\nUse the document content above as context to answer the following question.`,
-          },
-          ...extraHistory,
-        ];
-        contextSource = "raw_text";
-      } else {
-        contextSource = "none";
-      }
-    }
+    // 3. Orchestrator: routes structural vs reasoning, handles raw_text injection internally
+    const result = await answerQuestion({
+      question,
+      documentId: document_id,
+      history: extraHistory,
+      answerMode: parsed.data.answer_mode,
+      allowStructural: true,
+      trace,
+    });
 
     if (trace.graph) {
-      trace.graph.edges = await fetchSubgraphEdges(context.map((r) => r.id)).catch(() => []);
+      trace.graph.edges = await fetchSubgraphEdges(
+        (trace.graph.nodes ?? []).map((n) => n.id),
+      ).catch(() => []);
     }
-
-    const reasoning = await reason(question, context, extraHistory, trace);
-    trace.contextSource = contextSource;
 
     // 4. Save assistant response
     await saveChatMessage(
@@ -220,27 +168,28 @@ router.post("/", async (req: Request, res: Response): Promise<void> => {
       userId,
       "query",
       "assistant",
-      reasoning.answer,
+      result.answer,
       document_id,
     );
 
     res.json(
       success({
         session_id,
-        answer: reasoning.answer,
-        confidence: reasoning.confidence,
-        citations: reasoning.citations,
+        answer: result.answer,
+        confidence: result.confidence,
+        confidence_level: result.confidence_level,
+        citations: result.citations,
         document_id: document_id ?? null,
-        context_count: context.length,
-        context_source: contextSource,
+        context_count: result.contextCount,
+        context_source: trace.contextSource,
+        answer_mode: trace.answerMode ?? null,
         language: "id",
         trace: env.TRACE_ENABLED ? (trace as RetrievalTrace) : undefined,
       }),
     );
   } catch (err: unknown) {
     console.error("[query]", err);
-    const message =
-      err instanceof Error ? err.message : "Internal server error";
+    const message = err instanceof Error ? err.message : "Internal server error";
     res.status(500).json(error("INTERNAL", message));
   }
 });
@@ -271,7 +220,7 @@ router.get("/history/:sessionId", async (req: Request, res: Response): Promise<v
     const historyData = await getSessionHistory(sessionId);
     const history = Array.isArray(historyData)
       ? historyData
-      : (historyData as any).history ?? [];
+      : ((historyData as any).history ?? []);
 
     res.json(
       success({
@@ -298,7 +247,8 @@ router.get("/history/:sessionId", async (req: Request, res: Response): Promise<v
  *         description: Unauthorized
  */
 router.get("/sessions", async (req: Request, res: Response): Promise<void> => {
-  const userId = (req as Request & { user?: { userId: string } }).user?.userId ?? "anonymous";
+  const userId =
+    (req as Request & { user?: { userId: string } }).user?.userId ?? "anonymous";
 
   try {
     const session = await getSession();

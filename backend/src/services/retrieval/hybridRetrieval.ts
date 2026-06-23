@@ -94,17 +94,21 @@ function populateTraceSink(
   lists.forEach((list, i) => {
     list.forEach((item, rankIdx) => {
       if (!legPresence.has(item.id)) legPresence.set(item.id, []);
-      legPresence.get(item.id)!.push({ leg: legNames[i], rank: rankIdx, weight: weights[i] ?? 1.0 });
+      legPresence
+        .get(item.id)!
+        .push({ leg: legNames[i], rank: rankIdx, weight: weights[i] ?? 1.0 });
     });
   });
 
   const fusionItems: TraceFusionItem[] = merged.map((item, finalRank) => {
     const presence = legPresence.get(item.id) ?? [];
-    const contributions: TraceFusionContribution[] = presence.map(({ leg, rank, weight }) => ({
-      leg,
-      rank,
-      weighted: rrfScore(rank) * weight, // (1 / (RRF_K + rank + 1)) * legWeight
-    }));
+    const contributions: TraceFusionContribution[] = presence.map(
+      ({ leg, rank, weight }) => ({
+        leg,
+        rank,
+        weighted: rrfScore(rank) * weight, // (1 / (RRF_K + rank + 1)) * legWeight
+      }),
+    );
     const total = contributions.reduce((sum, c) => sum + c.weighted, 0);
     return { id: item.id, title: item.title, contributions, total, finalRank };
   });
@@ -123,7 +127,9 @@ function populateTraceSink(
   });
 
   // RRF total per item: reuse the fusion items we already computed
-  const rrfTotalById = new Map<string, number>(fusionItems.map((fi) => [fi.id, fi.total]));
+  const rrfTotalById = new Map<string, number>(
+    fusionItems.map((fi) => [fi.id, fi.total]),
+  );
 
   const graph: TraceGraph = {
     nodes: merged.map((r) => ({
@@ -178,7 +184,13 @@ export async function hybridRetrieval(
     );
   }
 
-  const lists: RetrievalResult[][] = [denseResults, bm25Results, symbolicResults];
+  // Drop dense-leg hits below the relevance floor before they enter RRF —
+  // cosine-similarity noise should not be treated as authoritative context.
+  // BM25/symbolic scores are not cosine-comparable, so they stay unfiltered.
+  const minDense = env.RETRIEVAL_MIN_DENSE_SCORE;
+  const denseFiltered = denseResults.filter((r) => r.score >= minDense);
+
+  const lists: RetrievalResult[][] = [denseFiltered, bm25Results, symbolicResults];
   const weights: number[] = [denseWeight, bm25Weight, symbolicWeight];
   const legNames: LegName[] = ["dense", "bm25", "symbolic"];
 

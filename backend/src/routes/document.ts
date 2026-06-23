@@ -13,53 +13,57 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
 import { processUploadedFile } from "../services/ocr/ocrService";
-import { embedText } from "../services/embedding/embeddingService";
 import { runGuardrailChecks } from "../services/guardrail/guardrailService";
 import { getSession } from "../config/neo4j";
 import { success, error as apiError } from "../utils/response";
 import { verifyToken } from "../middleware/auth";
 import { getUserDashboard } from "../services/dashboard/dashboardService";
+import { storeClauses } from "../services/document/clauseStore";
 
 const router = Router();
 
 const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: {
-        fileSize: parseInt(process.env.MAX_FILE_SIZE_MB ?? "10") * 1024 * 1024,
-    },
-    fileFilter: (_req, file, cb) => {
-        const allowed = [
-            "application/pdf",
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-            "image/tiff",
-            "image/bmp",
-        ];
-        if (allowed.includes(file.mimetype)) {
-            cb(null, true);
-        } else {
-            cb(new Error(`Unsupported file type: ${file.mimetype}. Allowed: PDF, JPEG, PNG, WebP, TIFF, BMP.`));
-        }
-    },
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: parseInt(process.env.MAX_FILE_SIZE_MB ?? "10") * 1024 * 1024,
+  },
+  fileFilter: (_req, file, cb) => {
+    const allowed = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/tiff",
+      "image/bmp",
+    ];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          `Unsupported file type: ${file.mimetype}. Allowed: PDF, JPEG, PNG, WebP, TIFF, BMP.`,
+        ),
+      );
+    }
+  },
 });
 
 //   Helpers     ─
 
 async function saveDocumentNode(
-    documentId: string,
-    userId: string,
-    filename: string,
-    mimeType: string,
-    fileBase64: string,
-    rawText: string,
-    pageCount: number | null,
-    clauseCount: number,
+  documentId: string,
+  userId: string,
+  filename: string,
+  mimeType: string,
+  fileBase64: string,
+  rawText: string,
+  pageCount: number | null,
+  clauseCount: number,
 ): Promise<void> {
-    const session = await getSession();
-    try {
-        await session.run(
-            `
+  const session = await getSession();
+  try {
+    await session.run(
+      `
       MERGE (d:Document { id: $id })
       SET d.user_id      = $userId,
           d.filename     = $filename,
@@ -70,63 +74,23 @@ async function saveDocumentNode(
           d.clause_count = $clauseCount,
           d.created_at   = datetime()
       `,
-            { id: documentId, userId, filename, mimeType, fileBase64, rawText, pageCount, clauseCount },
-        );
-    } finally {
-        await session.close();
-    }
+      {
+        id: documentId,
+        userId,
+        filename,
+        mimeType,
+        fileBase64,
+        rawText,
+        pageCount,
+        clauseCount,
+      },
+    );
+  } finally {
+    await session.close();
+  }
 }
 
-async function storeClauses(
-    documentId: string,
-    userId: string,
-    clauses: Awaited<ReturnType<typeof processUploadedFile>>["clauses"],
-): Promise<string[]> {
-    const session = await getSession();
-    const storedIds: string[] = [];
-    try {
-        for (const clause of clauses) {
-            let embedding: number[] = [];
-            try {
-                embedding = await embedText(clause.content || clause.header);
-            } catch {
-                // Embedding failure doesn't block storage
-            }
-
-            const clauseId = `${documentId}-${clause.index}`;
-            await session.run(
-                `
-        MERGE (cc:ContractClause { id: $id })
-        SET cc.document_id = $documentId,
-            cc.user_id     = $userId,
-            cc.index       = $index,
-            cc.header      = $header,
-            cc.content     = $content,
-            cc.embedding   = $embedding,
-            cc.created_at  = datetime()
-        WITH cc
-        MATCH (d:Document { id: $documentId })
-        MERGE (cc)-[:PART_OF]->(d)
-        `,
-                {
-                    id: clauseId,
-                    documentId,
-                    userId,
-                    index: clause.index,
-                    header: clause.header,
-                    content: clause.content,
-                    embedding,
-                },
-            );
-            storedIds.push(clauseId);
-        }
-    } finally {
-        await session.close();
-    }
-    return storedIds;
-}
-
-//   POST /api/v1/document/analyze    
+//   POST /api/v1/document/analyze
 
 /**
  * @swagger
@@ -150,68 +114,81 @@ async function storeClauses(
  *         description: Document successfully processed and stored
  */
 router.post(
-    "/analyze",
-    verifyToken,
-    upload.single("file"),
-    async (req: Request, res: Response): Promise<void> => {
-        if (!req.file) {
-            res.status(400).json(apiError("MISSING_FILE", 'A file upload is required.'));
-            return;
-        }
+  "/analyze",
+  verifyToken,
+  upload.single("file"),
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.file) {
+      res.status(400).json(apiError("MISSING_FILE", "A file upload is required."));
+      return;
+    }
 
-        const documentId = uuidv4();
-        const userId = (req as Request & { user?: { userId: string } }).user?.userId;
+    const documentId = uuidv4();
+    const userId = (req as Request & { user?: { userId: string } }).user?.userId;
 
-        if (!userId) {
-            res.status(401).json(apiError("UNAUTHORIZED", "User must be authenticated to analyze documents."));
-            return;
-        }
-        const filename = req.file.originalname ?? `document-${documentId}`;
-        const fileBase64 = req.file.buffer.toString("base64");
+    if (!userId) {
+      res
+        .status(401)
+        .json(
+          apiError("UNAUTHORIZED", "User must be authenticated to analyze documents."),
+        );
+      return;
+    }
+    const filename = req.file.originalname ?? `document-${documentId}`;
+    const fileBase64 = req.file.buffer.toString("base64");
 
-        try {
-            const ocrResult = await processUploadedFile(req.file.buffer, req.file.mimetype);
-            const guardrail = await runGuardrailChecks(ocrResult.raw_text);
+    try {
+      const ocrResult = await processUploadedFile(req.file.buffer, req.file.mimetype);
+      const guardrail = await runGuardrailChecks(ocrResult.raw_text);
 
-            await saveDocumentNode(
-                documentId,
-                userId,
-                filename,
-                req.file.mimetype,
-                fileBase64,
-                ocrResult.raw_text,
-                ocrResult.page_count ?? null,
-                ocrResult.clauses.length,
-            );
+      await saveDocumentNode(
+        documentId,
+        userId,
+        filename,
+        req.file.mimetype,
+        fileBase64,
+        ocrResult.raw_text,
+        ocrResult.page_count ?? null,
+        ocrResult.clauses.length,
+      );
 
-            const storedClauseIds = await storeClauses(documentId, userId, ocrResult.clauses);
+      const storedClauseIds = await storeClauses(documentId, userId, ocrResult.clauses);
 
-            res.json(success({
-                document_id: documentId,
-                filename,
-                raw_text: ocrResult.raw_text,
-                page_count: ocrResult.page_count ?? null,
-                clause_count: ocrResult.clauses.length,
-                clauses: ocrResult.clauses.map((c) => ({
-                    index: c.index,
-                    header: c.header,
-                    content_preview: c.content_preview,
-                })),
-                stored_clause_ids: storedClauseIds,
-                guardrail: {
-                    is_safe: guardrail.is_safe,
-                    warning_count: guardrail.warning_count,
-                    critical_violations: guardrail.critical_violations,
-                },
-            }));
-        } catch (err: unknown) {
-            console.error("[document/analyze]", err);
-            res.status(500).json(apiError("ANALYSIS_ERROR", err instanceof Error ? err.message : "Internal server error"));
-        }
-    },
+      res.json(
+        success({
+          document_id: documentId,
+          filename,
+          raw_text: ocrResult.raw_text,
+          page_count: ocrResult.page_count ?? null,
+          clause_count: ocrResult.clauses.length,
+          clauses: ocrResult.clauses.map((c) => ({
+            index: c.index,
+            header: c.header,
+            content_preview: c.content_preview,
+          })),
+          stored_clause_ids: storedClauseIds,
+          guardrail: {
+            is_safe: guardrail.is_safe,
+            warning_count: guardrail.warning_count,
+            critical_violations: guardrail.critical_violations,
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      console.error("[document/analyze]", err);
+      res
+        .status(500)
+        .json(
+          apiError(
+            "ANALYSIS_ERROR",
+            err instanceof Error ? err.message : "Internal server error",
+          ),
+        );
+    }
+  },
 );
 
-//   GET /api/v1/document/user  
+//   GET /api/v1/document/user
 
 /**
  * @swagger
@@ -226,20 +203,29 @@ router.post(
  *         description: List of user projects and documents
  */
 router.get("/user", verifyToken, async (req: Request, res: Response): Promise<void> => {
-    const userId = (req as Request & { user?: { userId: string } }).user?.userId;
+  const userId = (req as Request & { user?: { userId: string } }).user?.userId;
 
-    if (!userId || userId === "anonymous") {
-        res.status(401).json(apiError("UNAUTHORIZED", "You must be logged in to view your documents."));
-        return;
-    }
+  if (!userId || userId === "anonymous") {
+    res
+      .status(401)
+      .json(apiError("UNAUTHORIZED", "You must be logged in to view your documents."));
+    return;
+  }
 
-    try {
-        const history = await getUserDashboard(userId);
-        res.json(success(history));
-    } catch (err: unknown) {
-        console.error("[document/user]", err);
-        res.status(500).json(apiError("INTERNAL", err instanceof Error ? err.message : "Internal server error"));
-    }
+  try {
+    const history = await getUserDashboard(userId);
+    res.json(success(history));
+  } catch (err: unknown) {
+    console.error("[document/user]", err);
+    res
+      .status(500)
+      .json(
+        apiError(
+          "INTERNAL",
+          err instanceof Error ? err.message : "Internal server error",
+        ),
+      );
+  }
 });
 
 //   GET /api/v1/document/:documentId     ─
@@ -260,15 +246,13 @@ router.get("/user", verifyToken, async (req: Request, res: Response): Promise<vo
  *       200:
  *         description: Document found
  */
-router.get(
-    "/:documentId",
-    async (req: Request, res: Response): Promise<void> => {
-        const { documentId } = req.params;
-        const session = await getSession();
+router.get("/:documentId", async (req: Request, res: Response): Promise<void> => {
+  const { documentId } = req.params;
+  const session = await getSession();
 
-        try {
-            const result = await session.run(
-                `
+  try {
+    const result = await session.run(
+      `
         MATCH (d:Document { id: $documentId })
         OPTIONAL MATCH (cc:ContractClause)-[:PART_OF]->(d)
         WITH d, cc ORDER BY cc.index ASC
@@ -280,39 +264,47 @@ router.get(
         }) AS clauses
         RETURN d, clauses
         `,
-                { documentId },
-            );
+      { documentId },
+    );
 
-            if (result.records.length === 0) {
-                res.status(404).json(apiError("NOT_FOUND", `Document "${documentId}" not found.`));
-                return;
-            }
+    if (result.records.length === 0) {
+      res.status(404).json(apiError("NOT_FOUND", `Document "${documentId}" not found.`));
+      return;
+    }
 
-            const record = result.records[0];
-            const doc = record.get("d").properties;
-            const clauses = record.get("clauses") as any[];
+    const record = result.records[0];
+    const doc = record.get("d").properties;
+    const clauses = record.get("clauses") as any[];
 
-            res.json(success({
-                document_id: doc.id,
-                filename: doc.filename,
-                mime_type: doc.mime_type,
-                page_count: doc.page_count,
-                clause_count: doc.clause_count,
-                raw_text: doc.raw_text,
-                file_base64: doc.file_base64,
-                created_at: doc.created_at,
-                clauses: clauses.filter(c => c.id !== null),
-            }));
-        } catch (err: unknown) {
-            console.error("[document/get]", err);
-            res.status(500).json(apiError("INTERNAL", err instanceof Error ? err.message : "Internal server error"));
-        } finally {
-            await session.close();
-        }
-    },
-);
+    res.json(
+      success({
+        document_id: doc.id,
+        filename: doc.filename,
+        mime_type: doc.mime_type,
+        page_count: doc.page_count,
+        clause_count: doc.clause_count,
+        raw_text: doc.raw_text,
+        file_base64: doc.file_base64,
+        created_at: doc.created_at,
+        clauses: clauses.filter((c) => c.id !== null),
+      }),
+    );
+  } catch (err: unknown) {
+    console.error("[document/get]", err);
+    res
+      .status(500)
+      .json(
+        apiError(
+          "INTERNAL",
+          err instanceof Error ? err.message : "Internal server error",
+        ),
+      );
+  } finally {
+    await session.close();
+  }
+});
 
-//   GET /api/v1/document/analyze/:jobId/status   
+//   GET /api/v1/document/analyze/:jobId/status
 
 /**
  * @swagger
@@ -322,30 +314,30 @@ router.get(
  *     tags: [Document]
  */
 router.get(
-    "/analyze/:jobId/status",
-    async (req: Request, res: Response): Promise<void> => {
-        try {
-            const { analysisQueue } = await import("../queues/analysisQueue");
-            const jobId = req.params.jobId;
-            const job = await analysisQueue.getJob(String(jobId));
-            if (!job) {
-                res.status(404).json(apiError("JOB_NOT_FOUND", `Job ${jobId} not found.`));
-                return;
-            }
+  "/analyze/:jobId/status",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { analysisQueue } = await import("../queues/analysisQueue");
+      const jobId = req.params.jobId;
+      const job = await analysisQueue.getJob(String(jobId));
+      if (!job) {
+        res.status(404).json(apiError("JOB_NOT_FOUND", `Job ${jobId} not found.`));
+        return;
+      }
 
-            const state = await job.getState();
+      const state = await job.getState();
 
-            if (state === "completed") {
-                res.json(success({ status: "completed", result: job.returnvalue }));
-            } else if (state === "failed") {
-                res.json(success({ status: "failed", reason: job.failedReason }));
-            } else {
-                res.json(success({ status: state, progress: job.progress }));
-            }
-        } catch {
-            res.status(503).json(apiError("QUEUE_UNAVAILABLE", "Job queue is not available."));
-        }
-    },
+      if (state === "completed") {
+        res.json(success({ status: "completed", result: job.returnvalue }));
+      } else if (state === "failed") {
+        res.json(success({ status: "failed", reason: job.failedReason }));
+      } else {
+        res.json(success({ status: state, progress: job.progress }));
+      }
+    } catch {
+      res.status(503).json(apiError("QUEUE_UNAVAILABLE", "Job queue is not available."));
+    }
+  },
 );
 
 export default router;

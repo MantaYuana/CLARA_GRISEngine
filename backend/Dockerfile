@@ -15,5 +15,7 @@ RUN npm install
 
 COPY . .
 
-# We use a shell script or command chain to run init-schema, then seed:pdf (ignoring errors), then dev
-CMD ["sh", "-c", "npm run init-schema && (npm run seed:pdf || true) && npm run dev"]
+# Chain: schema → curated knowledge graph (concepts/relationships for the symbolic
+# retrieval leg) → PDF corpus (ignoring errors) → retrieval-upgrade migration
+# (re-embed + re-segment existing data, ignoring errors) → dev server.
+CMD ["sh", "-c", "npm run init-schema && (npm run seed:knowledge || true) && (npm run seed:pdf || true) && (npm run reembed || true) && (npm run reprocess-docs || true) && npm run dev"]

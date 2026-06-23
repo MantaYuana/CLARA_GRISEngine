@@ -20,15 +20,13 @@ import multer from "multer";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { processUploadedFile } from "../services/ocr/ocrService";
-import { embedText } from "../services/embedding/embeddingService";
 import { runGuardrailChecks } from "../services/guardrail/guardrailService";
-import { hybridRetrieval } from "../services/retrieval/hybridRetrieval";
 import { fetchSubgraphEdges } from "../services/retrieval/graphContext";
 import type { RetrievalTrace } from "../services/retrieval/retrievalTrace";
-import { reason } from "../services/reasoning/reasoningService";
-import { getSession } from "../config/neo4j";
+import { answerQuestion } from "../services/reasoning/answerService";
 import { success, error as apiError } from "../utils/response";
 import { env } from "../config/env";
+import { storeClauses } from "../services/document/clauseStore";
 
 const router = Router();
 const upload = multer({
@@ -45,53 +43,7 @@ const TextBodySchema = z.object({
     .default("Analisis kontrak ini dan temukan klausula yang berpotensi merugikan."),
 });
 
-//  Clause storage helper  
-
-async function storeClauses(
-  documentId: string,
-  userId: string,
-  clauses: Awaited<ReturnType<typeof processUploadedFile>>["clauses"],
-): Promise<void> {
-  const session = await getSession();
-  try {
-    for (const clause of clauses) {
-      let embedding: number[] = [];
-      try {
-        embedding = await embedText(
-          clause.content || clause.header,
-        );
-      } catch {
-        // Skip embedding if API fails; clause still stored without vector
-      }
-
-      await session.run(
-        `
-        MERGE (cc:ContractClause { id: $id })
-        SET cc.document_id = $documentId,
-            cc.user_id     = $userId,
-            cc.index       = $index,
-            cc.header      = $header,
-            cc.content     = $content,
-            cc.embedding   = $embedding,
-            cc.created_at  = datetime()
-        `,
-        {
-          id: `${documentId}-${clause.index}`,
-          documentId,
-          userId,
-          index: clause.index,
-          header: clause.header,
-          content: clause.content,
-          embedding,
-        },
-      );
-    }
-  } finally {
-    await session.close();
-  }
-}
-
-//  POST /api/v1/contract/review  
+//  POST /api/v1/contract/review
 
 /**
  * @swagger
@@ -287,27 +239,19 @@ router.post(
         "Analisis kontrak ini dan temukan klausula yang berpotensi merugikan.";
       const documentId = uuidv4();
 
-      //  File path  
+      //  File path
       if (req.file) {
         const ocrResult = await processUploadedFile(req.file.buffer, req.file.mimetype);
         contractText = ocrResult.raw_text;
 
-        // Store clause nodes in Neo4j (best-effort, non-blocking)
-        storeClauses(documentId, userId, ocrResult.clauses).catch((err) =>
-          console.warn("Clause storage warning:", err?.message),
-        );
+        // Store clause nodes so Phase 2 (/validate) retrieval + structural lookups work.
+        await storeClauses(documentId, userId, ocrResult.clauses);
 
-        // Extract numeric variables so the user can validate them
+        // Phase 1 is an OCR preview only: extract numeric variables for the user to
+        // confirm. Guardrail checks + AI reasoning run in Phase 2 (/validate), so we
+        // deliberately do NOT spend an LLM reasoning cycle here.
         const { extractNumericVariables } = await import("../services/ocr/ocrService");
         const extracted_variables = extractNumericVariables(contractText);
-        const [guardrail, context] = await Promise.all([
-          runGuardrailChecks(contractText),
-          hybridRetrieval(question, documentId),
-        ]);
-        // Always inject the contract text directly — don't rely solely on retrieval
-        const reasoning = await reason(question, context, [
-          { role: "user", content: `Here is the contract content you must analyze:\n\n${contractText}` },
-        ]);
 
         res.json(
           success({
@@ -328,7 +272,7 @@ router.post(
         return;
       }
 
-      //  Text-only path  
+      //  Text-only path
       const parsed = TextBodySchema.safeParse(req.body);
       if (!parsed.success || !parsed.data.text) {
         res
@@ -345,23 +289,41 @@ router.post(
 
       // 1. Save user interaction
       const { saveChatMessage } = await import("../services/chat/chatService");
-      await saveChatMessage(session_id, userId, "contract", "user", resolvedQuestion, documentId);
+      await saveChatMessage(
+        session_id,
+        userId,
+        "contract",
+        "user",
+        resolvedQuestion,
+        documentId,
+      );
 
       const trace: Partial<RetrievalTrace> = { query: resolvedQuestion };
-      const [guardrail, context] = await Promise.all([
+      const [guardrail, result] = await Promise.all([
         runGuardrailChecks(contractText),
-        hybridRetrieval(resolvedQuestion, undefined, 8, trace),
+        answerQuestion({
+          question: resolvedQuestion,
+          documentId: undefined,
+          history: [{ role: "user", content: `Contract to analyze:\n${contractText}` }],
+          allowStructural: false,
+          trace,
+        }),
       ]);
       if (trace.graph) {
-        trace.graph.edges = await fetchSubgraphEdges(context.map((r) => r.id)).catch(() => []);
+        trace.graph.edges = await fetchSubgraphEdges(
+          (trace.graph.nodes ?? []).map((n) => n.id),
+        ).catch(() => []);
       }
-      const reasoning = await reason(resolvedQuestion, context, [
-        { role: "user", content: `Contract to analyze:\n${contractText}` },
-      ], trace);
-      trace.contextSource = context.length > 0 ? "retrieval" : "raw_text";
 
       // 2. Save AI response
-      await saveChatMessage(session_id, userId, "contract", "model", reasoning.answer, documentId);
+      await saveChatMessage(
+        session_id,
+        userId,
+        "contract",
+        "model",
+        result.answer,
+        documentId,
+      );
 
       res.json(
         success({
@@ -369,9 +331,9 @@ router.post(
           session_id,
           question: resolvedQuestion,
           document_id: documentId,
-          answer: reasoning.answer,
-          confidence: reasoning.confidence,
-          citations: reasoning.citations,
+          answer: result.answer,
+          confidence: result.confidence,
+          citations: result.citations,
           clauses: [],
           guardrail: {
             has_violations: !guardrail.is_safe,
@@ -379,15 +341,15 @@ router.post(
             critical_violations: guardrail.critical_violations,
             checks: guardrail.checks,
           },
-          retrieval_context: context.map((n) => ({
+          retrieval_context: (trace.graph?.nodes ?? []).map((n) => ({
             id: n.id,
             label: n.label,
             title: n.title,
-            hybrid_score: n.score,
+            hybrid_score: n.fusedScore,
             source: n.source,
           })),
           meta: {
-            context_nodes_used: context.length,
+            context_nodes_used: result.contextCount,
             reasoning_paths_generated: 3,
           },
           language: "id",
@@ -402,7 +364,7 @@ router.post(
   },
 );
 
-//   POST /api/v1/contract/validate  (Phase 2)                   
+//   POST /api/v1/contract/validate  (Phase 2)
 //
 // Accepts corrected numeric variables from the frontend OCR-validation card,
 // runs the deterministic guardrail checks, performs hybrid retrieval, and
@@ -503,33 +465,28 @@ router.post("/validate", async (req: Request, res: Response): Promise<void> => {
     );
 
     const trace: Partial<RetrievalTrace> = { query: question };
-    const [context] = await Promise.all([
-      hybridRetrieval(question, document_id, 8, trace),
-    ]);
+    const result = await answerQuestion({
+      question,
+      documentId: document_id,
+      history: [{ role: "user", content: `Kontrak untuk dianalisis:\n${raw_text}` }],
+      allowStructural: false,
+      trace,
+    });
 
     if (trace.graph) {
       trace.graph.edges = await fetchSubgraphEdges(
-        context.map((r) => r.id),
+        (trace.graph.nodes ?? []).map((r) => r.id),
       ).catch(() => []);
     }
-
-    const reasoning = await reason(
-      question,
-      context,
-      [{ role: "user", content: `Kontrak untuk dianalisis:\n${raw_text}` }],
-      trace,
-    );
-    // Contract text is always injected via history; retrieval is the legal-context source.
-    trace.contextSource = context.length > 0 ? "retrieval" : "raw_text";
 
     res.json(
       success({
         success: true,
         question,
         document_id,
-        answer: reasoning.answer,
-        confidence: reasoning.confidence,
-        citations: reasoning.citations,
+        answer: result.answer,
+        confidence: result.confidence,
+        citations: result.citations,
         trace: env.TRACE_ENABLED ? (trace as RetrievalTrace) : undefined,
         guardrail: {
           has_violations: !guardrail.is_safe,
@@ -538,15 +495,15 @@ router.post("/validate", async (req: Request, res: Response): Promise<void> => {
           checks: guardrail.checks,
           corrected_variables, // echo back so frontend can confirm what was used
         },
-        retrieval_context: context.map((n) => ({
+        retrieval_context: (trace.graph?.nodes ?? []).map((n) => ({
           id: n.id,
           label: n.label,
           title: n.title,
-          hybrid_score: n.score,
+          hybrid_score: n.fusedScore,
           source: n.source,
         })),
         meta: {
-          context_nodes_used: context.length,
+          context_nodes_used: result.contextCount,
           reasoning_paths_generated: 3,
         },
         language: "id",

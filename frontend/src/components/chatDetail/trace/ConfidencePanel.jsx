@@ -1,6 +1,6 @@
 /**
- * ConfidencePanel — reasoning paths, entropy chain, and confidence badge.
- * Props: reasoning: { paths[], entropy, citationBonus, adjustedEntropy, confidence, confidenceLevel }
+ * ConfidencePanel — reasoning paths, groundedness/agreement bars, gate banner, and confidence badge.
+ * Props: reasoning: { paths[], agreement, groundedness, unsupportedClaims[], gated, confidence, confidenceLevel }
  */
 
 const LEVEL_STYLES = {
@@ -27,8 +27,6 @@ const LEVEL_STYLES = {
   },
 };
 
-const fmt = (n, decimals = 4) => (n != null ? Number(n).toFixed(decimals) : "–");
-
 const ConfidencePanel = ({ reasoning }) => {
   if (!reasoning) {
     return (
@@ -40,9 +38,10 @@ const ConfidencePanel = ({ reasoning }) => {
 
   const {
     paths = [],
-    entropy,
-    citationBonus,
-    adjustedEntropy,
+    agreement,
+    groundedness,
+    unsupportedClaims = [],
+    gated,
     confidence,
     confidenceLevel = "yellow",
   } = reasoning;
@@ -97,36 +96,34 @@ const ConfidencePanel = ({ reasoning }) => {
         </p>
       )}
 
-      {/* Entropy chain */}
+      {/* Groundedness + agreement bars */}
       <div className="flex flex-col gap-2">
         <p className="text-[10px] uppercase tracking-widest dark:text-textSecondary/60 text-gray-500 font-semibold">
-          Entropy Chain
+          Confidence Inputs
         </p>
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 rounded-xl dark:bg-surfaceLight bg-gray-100 border dark:border-border border-gray-200">
-          <ChainToken
-            label="entropy"
-            value={fmt(entropy)}
-            color="dark:text-textPrimary text-gray-700"
-          />
-          <span className="dark:text-textSecondary text-gray-400 text-sm font-light">
-            −
-          </span>
-          <ChainToken
-            label="citationBonus"
-            value={fmt(citationBonus)}
-            color="text-green-400"
-          />
-          <span className="dark:text-textSecondary text-gray-400 text-sm font-light">
-            =
-          </span>
-          <ChainToken
-            label="adjustedEntropy"
-            value={fmt(adjustedEntropy)}
-            color="text-primary"
-            highlight
-          />
-        </div>
+        <Bar label="Groundedness" value={groundedness} color="#10b981" />
+        <Bar label="Agreement" value={agreement} color="#3b82f6" />
       </div>
+
+      {gated && (
+        <div className="px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 text-xs">
+          ⚠️ Groundedness di bawah ambang ({Math.round((groundedness ?? 0) * 100)}%) —
+          confidence dipaksa RENDAH.
+        </div>
+      )}
+
+      {unsupportedClaims.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <p className="text-[10px] uppercase tracking-widest text-red-400/80 font-semibold">
+            Unsupported claims
+          </p>
+          <ul className="text-xs dark:text-textSecondary text-gray-600 list-disc pl-4">
+            {unsupportedClaims.map((c, i) => (
+              <li key={i}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Confidence badge */}
       <div
@@ -179,18 +176,25 @@ const ConfidencePanel = ({ reasoning }) => {
   );
 };
 
-/** Small label+value token used in the entropy chain row */
-const ChainToken = ({ label, value, color, highlight }) => (
-  <div
-    className={`flex flex-col items-center px-2 py-1 rounded-lg ${
-      highlight ? "dark:bg-primary/10 bg-primary/5" : ""
-    }`}
-  >
-    <span className="text-[9px] dark:text-textSecondary/60 text-gray-400 uppercase tracking-wider">
-      {label}
-    </span>
-    <span className={`text-sm font-mono font-semibold ${color}`}>{value}</span>
-  </div>
-);
+/** Labeled horizontal progress bar used for groundedness/agreement inputs */
+const Bar = ({ label, value, color }) => {
+  const pct = value != null ? Math.round(value * 100) : 0;
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[11px] w-24 dark:text-textSecondary text-gray-500">
+        {label}
+      </span>
+      <div className="flex-1 h-2 rounded-full bg-gray-200 dark:bg-surfaceLight overflow-hidden">
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${pct}%`, background: color }}
+        />
+      </div>
+      <span className="text-[11px] font-mono w-9 text-right dark:text-textPrimary text-gray-700">
+        {pct}%
+      </span>
+    </div>
+  );
+};
 
 export default ConfidencePanel;

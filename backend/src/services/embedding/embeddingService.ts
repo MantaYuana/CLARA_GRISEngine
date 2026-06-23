@@ -23,9 +23,9 @@ async function getExtractor(): Promise<FeatureExtractionPipeline> {
   if (!extractor) {
     const modelName = env.EMBEDDING_MODEL;
     console.log(`[Embedding] Loading model: ${modelName}`);
-    extractor = await pipeline("feature-extraction", modelName, {
+    extractor = (await pipeline("feature-extraction", modelName, {
       dtype: "fp32",
-    }) as FeatureExtractionPipeline;
+    })) as FeatureExtractionPipeline;
     console.log(`[Embedding] Model loaded.`);
   }
   return extractor;
@@ -34,6 +34,14 @@ async function getExtractor(): Promise<FeatureExtractionPipeline> {
 // Rate-limit helper: small delay between batch calls to avoid CPU starvation
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+export type E5Kind = "query" | "passage";
+
+/** multilingual-e5 requires a "query: " / "passage: " prefix. Idempotent. */
+export function buildE5Input(text: string, kind: E5Kind = "passage"): string {
+  if (/^(query|passage):\s/.test(text)) return text;
+  return `${kind}: ${text}`;
+}
+
 /**
  * Embed a single text string and return a flat number[] vector.
  *
@@ -41,12 +49,19 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * equals dot-product, matching Neo4j's vector index similarity function.
  *
  * @param text  Input text (truncated to model's max token limit internally)
+ * @param kind  "query" for search queries, "passage" (default) for stored content
  */
-export async function embedText(text: string): Promise<number[]> {
+export async function embedText(
+  text: string,
+  kind: E5Kind = "passage",
+): Promise<number[]> {
   const extract = await getExtractor();
 
   // mean pooling + L2 normalize → standard semantic embedding
-  const output = await extract(text, { pooling: "mean", normalize: true });
+  const output = await extract(buildE5Input(text, kind), {
+    pooling: "mean",
+    normalize: true,
+  });
 
   // output.data is a Float32Array; convert to plain number[]
   return Array.from(output.data as Float32Array);
@@ -56,10 +71,13 @@ export async function embedText(text: string): Promise<number[]> {
  * Embed multiple texts sequentially with a 300 ms delay between calls
  * to avoid saturating the CPU during bulk seeding operations.
  */
-export async function embedBatch(texts: string[]): Promise<number[][]> {
+export async function embedBatch(
+  texts: string[],
+  kind: E5Kind = "passage",
+): Promise<number[][]> {
   const embeddings: number[][] = [];
   for (const text of texts) {
-    embeddings.push(await embedText(text));
+    embeddings.push(await embedText(text, kind));
     await sleep(300);
   }
   return embeddings;

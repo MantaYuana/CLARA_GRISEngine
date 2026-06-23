@@ -11,8 +11,9 @@
  *
  * Trace shape (all fields are optional / defensive):
  * {
- *   query, legs[], fusion{rrfK, items[]}, graph{nodes[], edges[]},
- *   reasoning{paths[], entropy, citationBonus, adjustedEntropy, confidence, confidenceLevel},
+ *   query, mode: "hybrid"|"structural", legs[], fusion{rrfK, items[]}, graph{nodes[], edges[]},
+ *   structural{kind, pasalNumber, ayatNumber, matched[], source}, answerMode: "raw"|"natural",
+ *   reasoning{paths[], agreement, groundedness, unsupportedClaims[], gated, confidence, confidenceLevel},
  *   contextSource
  * }
  */
@@ -30,6 +31,7 @@ import LegScores from "./trace/LegScores.jsx";
 import RrfTable from "./trace/RrfTable.jsx";
 import TraceGraph from "./trace/TraceGraph.jsx";
 import ConfidencePanel from "./trace/ConfidencePanel.jsx";
+import StructuralPanel from "./trace/StructuralPanel.jsx";
 
 // ── Section wrapper ────────────────────────────────────────────────────────────
 const Section = ({ title, step, children, defaultOpen = true }) => {
@@ -122,9 +124,20 @@ const RetrievalTraceDrawer = ({ open, onClose, trace }) => {
   // Gate: nothing to render
   if (!mounted || !trace) return null;
 
-  const { query = "", legs = [], fusion, graph, reasoning, contextSource } = trace;
+  const {
+    query = "",
+    mode = "hybrid",
+    legs = [],
+    fusion,
+    graph,
+    reasoning,
+    structural,
+    answerMode,
+    contextSource,
+  } = trace;
 
   const isRetrievalMode = !contextSource || contextSource === "retrieval";
+  const isStructural = mode === "structural";
 
   return (
     <>
@@ -185,30 +198,47 @@ const RetrievalTraceDrawer = ({ open, onClose, trace }) => {
             {/* Context source banner (only if not normal retrieval) */}
             <ContextBanner contextSource={contextSource} />
 
-            {/* ── Section 1: Pipeline stepper ───────────────────────────── */}
-            <Section title="Retrieval Pipeline" step={null} defaultOpen>
-              <PipelineStepper />
-            </Section>
+            {isStructural ? (
+              <>
+                {/* ── Structural mode: deterministic Pasal lookup ──────── */}
+                <Section title="Structural Lookup" step={1} defaultOpen>
+                  <StructuralPanel structural={structural} answerMode={answerMode} />
+                </Section>
 
-            {/* ── Section 2: Per-leg scores ─────────────────────────────── */}
-            <Section title="Per-Leg Scores" step={1} defaultOpen={isRetrievalMode}>
-              <LegScores legs={legs} />
-            </Section>
+                {reasoning && (
+                  <Section title="Confidence & Reasoning" step={2} defaultOpen>
+                    <ConfidencePanel reasoning={reasoning} />
+                  </Section>
+                )}
+              </>
+            ) : (
+              <>
+                {/* ── Section 1: Pipeline stepper ───────────────────────────── */}
+                <Section title="Retrieval Pipeline" step={null} defaultOpen>
+                  <PipelineStepper />
+                </Section>
 
-            {/* ── Section 3: RRF fusion table ──────────────────────────── */}
-            <Section title="RRF Fusion" step={2} defaultOpen={isRetrievalMode}>
-              <RrfTable fusion={fusion} legs={legs} />
-            </Section>
+                {/* ── Section 2: Per-leg scores ─────────────────────────────── */}
+                <Section title="Per-Leg Scores" step={1} defaultOpen={isRetrievalMode}>
+                  <LegScores legs={legs} />
+                </Section>
 
-            {/* ── Section 4: Knowledge graph ───────────────────────────── */}
-            <Section title="Knowledge Graph" step={3} defaultOpen={isRetrievalMode}>
-              <TraceGraph graph={graph} fusion={fusion} query={query} />
-            </Section>
+                {/* ── Section 3: RRF fusion table ──────────────────────────── */}
+                <Section title="RRF Fusion" step={2} defaultOpen={isRetrievalMode}>
+                  <RrfTable fusion={fusion} legs={legs} />
+                </Section>
 
-            {/* ── Section 5: Confidence ────────────────────────────────── */}
-            <Section title="Confidence & Reasoning" step={4} defaultOpen>
-              <ConfidencePanel reasoning={reasoning} />
-            </Section>
+                {/* ── Section 4: Knowledge graph ───────────────────────────── */}
+                <Section title="Knowledge Graph" step={3} defaultOpen={isRetrievalMode}>
+                  <TraceGraph graph={graph} fusion={fusion} query={query} />
+                </Section>
+
+                {/* ── Section 5: Confidence ────────────────────────────────── */}
+                <Section title="Confidence & Reasoning" step={4} defaultOpen>
+                  <ConfidencePanel reasoning={reasoning} />
+                </Section>
+              </>
+            )}
           </div>
         </div>
 

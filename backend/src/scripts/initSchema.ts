@@ -33,7 +33,9 @@ async function initSchema(): Promise<void> {
       await session.run(cql);
     }
     // Module 3 – Index on google_id for fast OAuth lookups
-    await session.run("CREATE INDEX user_google_id IF NOT EXISTS FOR (u:User) ON (u.google_id)");
+    await session.run(
+      "CREATE INDEX user_google_id IF NOT EXISTS FOR (u:User) ON (u.google_id)",
+    );
 
     // vector Indexes for Article embeddings
     await session.run(`
@@ -54,10 +56,16 @@ async function initSchema(): Promise<void> {
       }}
     `);
 
-    // Full-text Index (for BM25) 
+    // Full-text Index (for BM25)
     await session.run(`
       CREATE FULLTEXT INDEX article_text_idx IF NOT EXISTS
       FOR (a:Article|LegalConcept) ON EACH [a.content, a.title, a.name]
+    `);
+
+    // Full-text (BM25) over uploaded contract clauses — enables keyword search on the document.
+    await session.run(`
+      CREATE FULLTEXT INDEX clause_text_idx IF NOT EXISTS
+      FOR (cc:ContractClause) ON EACH [cc.content, cc.header, cc.title]
     `);
   } finally {
     await session.close();

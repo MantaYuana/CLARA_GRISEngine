@@ -4,20 +4,25 @@
  * Self-Consistency Loop:
  *
  *  1. Generate N reasoning paths at varying temperatures.
- *  2. Compute Jensen-Shannon entropy to measure inter-path divergence.
- *  3. Map entropy to a confidence level: green / yellow / red.
- *  4. Select the best answer (conservative path) and enforce citations.
- *
- * All responses must include statutory references (Pasal / UU / PP / Permenaker).
+ *  2. Select the conservative anchor path (index 0, low temperature).
+ *  3. Verify groundedness of the answer against the supplied context/document
+ *     text (LLM-verified claim support) and compute semantic agreement
+ *     across paths (mean pairwise cosine of their embeddings).
+ *  4. Combine groundedness (gated) + agreement into a single honest
+ *     confidence score: green / yellow / red.
+ *  5. Build citations via exact Pasal/UU matching against the retrieved
+ *     context nodes (no fuzzy substring matching).
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../../config/env";
 import type { RetrievalResult } from "../retrieval/denseRetrieval";
 import type { RetrievalTrace } from "../retrieval/retrievalTrace";
+import { checkGroundedness } from "./groundedness";
+import { embedText } from "../embedding/embeddingService";
 
 const genAI = new GoogleGenerativeAI(env.GOOGLE_AI_API_KEY);
 
-// Types 
+// Types
 
 export interface Citation {
   id: string;
@@ -30,42 +35,34 @@ export type ConfidenceLevel = "green" | "yellow" | "red";
 export interface ReasoningResult {
   answer: string;
   citations: Citation[];
-  confidence: number;           // 0–1 numeric score
+  confidence: number; // 0–1 numeric score
   confidence_level: ConfidenceLevel; // green / yellow / red
-  confidence_label: string;     // human-readable explanation
-  variance: number;             // raw JS-entropy (debug/logging)
+  confidence_label: string; // human-readable explanation
+  variance: number; // 1 - agreement (debug/logging, kept for back-compat)
   language: "id" | "en";
 }
 
-// System Prompt 
+// System Prompt
 
-const SYSTEM_PROMPT = `You are CLARA (Contract & Legal AI Reasoning Assistant), an AI-based legal assistant designed specifically to help Indonesian MSMEs understand contracts and employment regulations.
+const SYSTEM_PROMPT = `Anda adalah CLARA, asisten hukum AI untuk UMKM Indonesia. Jawab dalam Bahasa Indonesia yang jelas.
 
-CORE GUIDELINES:
-1. PRIORITIZE PROVIDED LEGAL CONTEXT (RAG): Always use information, articles, and laws from the "LEGAL CONTEXT" section first.
-2. USE INTERNAL KNOWLEDGE AS AN ALTERNATIVE: IF AND ONLY IF the provided context is empty OR completely irrelevant to the question, then you may use your internal legal knowledge to answer.
-3. MUST cite relevant articles and laws (format: "Article N Law No. X Year YYYY").
-4. Use clear English that is easy to understand for MSME business owners.
-5. Provide practical advice, not just legal theory.
-6. Explicitly tag legal risks with labels [HIGH RISK], [MEDIUM RISK], or [ATTENTION].
+PEDOMAN:
+1. UTAMAKAN "KONTEKS HUKUM" dan isi DOKUMEN yang diberikan. Jawab berdasarkan teks itu.
+2. Jika pertanyaan menanyakan ISI DOKUMEN dan informasinya tidak ada di dokumen, katakan "Tidak ditemukan dalam dokumen." JANGAN mengarang.
+3. Gunakan pengetahuan hukum internal HANYA untuk pertanyaan hukum umum ketika konteks kosong/tidak relevan — bukan untuk mengarang isi dokumen pengguna.
+4. Sebutkan pasal/UU yang relevan BILA ADA dalam konteks (format: "Pasal N UU No. X Tahun YYYY"). Jangan paksakan kutipan bila tidak relevan.
+5. Beri saran praktis dan tandai risiko dengan [RISIKO TINGGI]/[RISIKO SEDANG]/[PERHATIAN].`;
 
-MANDATORY ANSWER FORMAT:
-- Start with a brief summary (1-2 sentences)
-- Legal analysis based on relevant articles (MUST mention at least one Article/Law/Regulation)
-- Practical recommendations
-- Risk notes if any`;
-
-// Context builder 
+// Context builder
 
 function buildContext(results: RetrievalResult[]): string {
-  if (results.length === 0)
-    return "No relevant legal context found.";
+  if (results.length === 0) return "No relevant legal context found.";
   return results
     .map((r, i) => `[${i + 1}] ${r.label}: ${r.title} (${r.source})\n${r.content}`)
     .join("\n\n---\n\n");
 }
 
-// Citation extraction 
+// Citation extraction
 const CITATION_PATTERN =
   /(?:Pasal\s+\d+(?:\s+ayat\s+\d+)?|UU\s+(?:No\.\s*)?\d+(?:\s+Tahun\s+\d{4})?|PP\s+(?:No\.\s*)?\d+(?:\s+Tahun\s+\d{4})?|Permenaker\s+(?:No\.\s*)?\d+(?:\s+Tahun\s+\d{4})?)/gi;
 
@@ -73,7 +70,45 @@ function countCitations(text: string): number {
   return (text.match(CITATION_PATTERN) ?? []).length;
 }
 
-// Single reasoning path 
+// Exact legal-reference parsing/matching (Task 13)
+
+export interface LegalRef {
+  pasal?: number;
+  ayat?: number;
+  uuNumber?: number;
+  uuYear?: number;
+}
+
+export function parseLegalRef(s: string): LegalRef {
+  const pasal = s.match(/Pasal\s+(\d+)/i);
+  const ayat = s.match(/ayat\s+\(?(\d+)\)?/i);
+  const uu = s.match(/UU\s+(?:No\.?\s*)?(\d+)(?:\s+Tahun\s+(\d{4}))?/i);
+  return {
+    pasal: pasal ? parseInt(pasal[1], 10) : undefined,
+    ayat: ayat ? parseInt(ayat[1], 10) : undefined,
+    uuNumber: uu ? parseInt(uu[1], 10) : undefined,
+    uuYear: uu && uu[2] ? parseInt(uu[2], 10) : undefined,
+  };
+}
+
+export function refMatchesNode(
+  ref: string,
+  node: { title: string; content: string; pasal_number?: number | null },
+): boolean {
+  const r = parseLegalRef(ref);
+  if (r.pasal == null) {
+    // Non-pasal ref (e.g. a bare UU) → fall back to whole-token title match.
+    return node.title.toLowerCase().includes(ref.toLowerCase());
+  }
+  const nodeRef = parseLegalRef(node.title);
+  const nodePasal = node.pasal_number ?? nodeRef.pasal;
+  if (nodePasal !== r.pasal) return false;
+  // If the citation names a UU year and the node has one, they must agree.
+  if (r.uuYear && nodeRef.uuYear && r.uuYear !== nodeRef.uuYear) return false;
+  return true;
+}
+
+// Single reasoning path
 async function generatePath(
   prompt: string,
   systemInstruction: string,
@@ -88,26 +123,19 @@ async function generatePath(
   return result.response.text().trim();
 }
 
-// Self-consistency loop 
+// Self-consistency loop
 
 /**
  * Run N Gemini calls at varying temperatures to generate diverse reasoning paths.
  * Path 0 is always at TEMPERATURE_LOW (conservative / statutory anchor).
  * Paths 1…N-1 use TEMPERATURE_HIGH (exploratory).
  */
-async function selfConsistencyLoop(
-  prompt: string,
-  n: number,
-): Promise<string[]> {
+async function selfConsistencyLoop(prompt: string, n: number): Promise<string[]> {
   const tempLow = parseFloat(String(env.TEMPERATURE_LOW ?? 0.1));
   const tempHigh = parseFloat(String(env.TEMPERATURE_HIGH ?? 0.7));
 
   const tasks = Array.from({ length: n }, (_, i) =>
-    generatePath(
-      prompt,
-      SYSTEM_PROMPT,
-      i === 0 ? tempLow : tempHigh,
-    ).catch(() => ""),
+    generatePath(prompt, SYSTEM_PROMPT, i === 0 ? tempLow : tempHigh).catch(() => ""),
   );
 
   const paths = await Promise.all(tasks);
@@ -115,109 +143,77 @@ async function selfConsistencyLoop(
   return paths.filter((p) => p.length > 0);
 }
 
-// Entropy computation 
-/**
- * Compute a simplified Jensen-Shannon divergence proxy between N answer paths.
- *
- * Steps:
- *  1. Tokenise each path on whitespace → term frequency map.
- *  2. Build a shared vocabulary.
- *  3. For each term, compute the variance of its normalised frequency across paths.
- *  4. Average the per-term variances → overall divergence score (0 = identical, 1 = fully divergent).
- *
- * Using variance rather than true JS divergence keeps the implementation
- * dependency-free while producing the same monotonic signal.
- */
-function computeEntropy(paths: string[]): number {
-  if (paths.length <= 1) return 0;
+// Semantic agreement (Task 12)
 
-  // Build term-frequency maps (lowercase, alpha tokens only)
-  const tfMaps: Map<string, number>[] = paths.map((path) => {
-    const tokens = path.toLowerCase().match(/[a-z\u00C0-\u024F]{2,}/g) ?? [];
-    const freq = new Map<string, number>();
-    for (const tok of tokens) {
-      freq.set(tok, (freq.get(tok) ?? 0) + 1);
+export function meanPairwiseCosine(vectors: number[][]): number {
+  if (vectors.length <= 1) return 1;
+  let sum = 0,
+    count = 0;
+  for (let i = 0; i < vectors.length; i++) {
+    for (let j = i + 1; j < vectors.length; j++) {
+      let dot = 0;
+      const a = vectors[i],
+        b = vectors[j];
+      for (let k = 0; k < a.length; k++) dot += a[k] * b[k]; // L2-normalized → dot = cosine
+      sum += dot;
+      count++;
     }
-    // Normalise to relative frequencies
-    const total = tokens.length || 1;
-    freq.forEach((v, k) => freq.set(k, v / total));
-    return freq;
-  });
-
-  // Union vocabulary
-  const vocab = new Set<string>();
-  tfMaps.forEach((m) => m.forEach((_, k) => vocab.add(k)));
-  if (vocab.size === 0) return 0;
-
-  // Mean per-term variance across paths
-  let totalVariance = 0;
-  vocab.forEach((term) => {
-    const freqs = tfMaps.map((m) => m.get(term) ?? 0);
-    const mean = freqs.reduce((a, b) => a + b, 0) / freqs.length;
-    const variance =
-      freqs.reduce((a, b) => a + (b - mean) ** 2, 0) / freqs.length;
-    totalVariance += variance;
-  });
-
-  // Normalise: average variance across vocab, cap at 1
-  const avgVariance = totalVariance / vocab.size;
-  // Scale factor empirically tuned so cross-topic paths score ~0.6–0.8
-  return Math.min(avgVariance * 500, 1.0);
+  }
+  return count ? sum / count : 1;
 }
 
-// Confidence level mapping
-interface ConfidenceResult {
+export async function semanticAgreement(paths: string[]): Promise<number> {
+  if (paths.length <= 1) return 1;
+  const vecs = await Promise.all(
+    paths.map((p) => embedText(p.slice(0, 2000), "passage")),
+  );
+  return meanPairwiseCosine(vecs);
+}
+
+// Groundedness-gated confidence (Task 12)
+
+export function combineConfidence(
+  groundedness: number,
+  agreement: number,
+): {
   score: number;
   level: ConfidenceLevel;
   label: string;
-  /** Citation reduction applied to raw entropy before thresholding. */
-  citationBonus: number;
-  /** entropy after subtracting citationBonus (clamped to 0). */
-  adjustedEntropy: number;
-}
-
-function mapConfidenceLevel(entropy: number, citationCount: number): ConfidenceResult {
-  // Citation bonus: each statutory citation reduces uncertainty
-  const citationBonus = Math.min(citationCount * 0.05, 0.2);
-  const adjustedEntropy = Math.max(0, entropy - citationBonus);
-
-  if (adjustedEntropy < 0.25) {
+  gated: boolean;
+} {
+  if (groundedness < env.GROUNDEDNESS_FLOOR) {
     return {
-      score: Math.round((1.0 - adjustedEntropy) * 100) / 100,
-      level: "green",
-      label:
-        "High – Answer is based on clear and consistent statutory text.",
-      citationBonus,
-      adjustedEntropy,
-    };
-  } else if (adjustedEntropy < 0.55) {
-    return {
-      score: Math.round((0.75 - adjustedEntropy * 0.5) * 100) / 100,
-      level: "yellow",
-      label:
-        "Medium – Answer is interpretive. Further consultation with a legal expert is recommended.",
-      citationBonus,
-      adjustedEntropy,
-    };
-  } else {
-    return {
-      score: Math.round(Math.max(0.05, 0.5 - adjustedEntropy * 0.5) * 100) / 100,
+      score: Math.round(Math.min(0.3, groundedness) * 100) / 100,
       level: "red",
+      gated: true,
       label:
-        "Low – Novel issue or conflicting legal sources. Consultation with a lawyer is mandatory.",
-      citationBonus,
-      adjustedEntropy,
+        "Rendah – Jawaban tidak cukup didukung oleh dokumen/konteks. Verifikasi manual diperlukan.",
     };
   }
+  const score = Math.round((0.5 * groundedness + 0.5 * agreement) * 100) / 100;
+  if (score >= 0.75)
+    return {
+      score,
+      level: "green",
+      gated: false,
+      label: "Tinggi – Jawaban konsisten dan didukung oleh sumber.",
+    };
+  return {
+    score,
+    level: "yellow",
+    gated: false,
+    label: "Sedang – Jawaban interpretatif; pertimbangkan konsultasi lebih lanjut.",
+  };
 }
 
-// Main export 
+// Main export
 
 export async function reason(
   question: string,
   context: RetrievalResult[],
   history?: { role: string; content: string }[],
   traceSink?: Partial<RetrievalTrace>,
+  groundingText?: string,
 ): Promise<ReasoningResult> {
   const n = parseInt(String(env.REASONING_PATHS ?? 3), 10);
 
@@ -246,41 +242,36 @@ export async function reason(
     if (traceSink !== undefined) {
       traceSink.reasoning = {
         paths: [],
-        entropy: 1.0,
-        citationBonus: 0,
-        adjustedEntropy: 1.0,
+        agreement: 1,
+        groundedness: 0,
+        unsupportedClaims: [],
+        gated: true,
         confidence: 0,
         confidenceLevel: "red",
       };
     }
     return {
       answer:
-        "Sorry, an error occurred while processing your question. Please try again.",
+        "Maaf, terjadi kesalahan saat memproses pertanyaan Anda. Silakan coba lagi.",
       citations: [],
       confidence: 0,
       confidence_level: "red",
       confidence_label:
-        "Low – Cannot generate an answer. Please try again or simplify your question.",
+        "Rendah – Tidak dapat menghasilkan jawaban. Silakan coba lagi atau sederhanakan pertanyaan Anda.",
       variance: 1.0,
-      language: "en",
+      language: "id",
     };
   }
 
-  // Select the best path: prefer path[0] (conservative anchor);
-  // but if it has zero citations, swap to the path with the most citations.
-  let bestPath = paths[0];
-  const citationsInBest = countCitations(bestPath);
-  if (citationsInBest === 0 && paths.length > 1) {
-    const best = paths.reduce((prev, cur) =>
-      countCitations(cur) > countCitations(prev) ? cur : prev,
-    );
-    if (countCitations(best) > 0) bestPath = best;
-  }
+  // Conservative anchor; no longer "prefer most citations" (removes fabrication incentive).
+  const bestPath = paths[0];
 
-  // Entropy across all generated paths
-  const entropy = computeEntropy(paths);
-  const totalCitations = countCitations(bestPath);
-  const conf = mapConfidenceLevel(entropy, totalCitations);
+  const grounding = await checkGroundedness(
+    bestPath,
+    groundingText ?? buildContext(context),
+  );
+  const agreement = await semanticAgreement(paths);
+  const conf = combineConfidence(grounding.score, agreement);
 
   // Populate trace sink if provided — mirrors exactly the values already computed above.
   // path index 0 ran at TEMPERATURE_LOW; all subsequent paths at TEMPERATURE_HIGH.
@@ -293,60 +284,44 @@ export async function reason(
         temperature: idx === 0 ? tempLow : tempHigh,
         citationCount: countCitations(text),
       })),
-      entropy,
-      citationBonus: conf.citationBonus,
-      adjustedEntropy: conf.adjustedEntropy,
+      agreement,
+      groundedness: grounding.score,
+      unsupportedClaims: grounding.unsupportedClaims,
+      gated: conf.gated,
       confidence: conf.score,
       confidenceLevel: conf.level,
     };
   }
 
-  // Filter the AI's answer against the RAG context to build a reliable citation list.
-  // We prioritize citations that genuinely came from Neo4j (RAG).
+  // Build citations via exact Pasal/UU matching against the retrieved context nodes.
   const citations: Citation[] = [];
-  const extracted = (bestPath.match(CITATION_PATTERN) ?? []);
-  const uniqueExtracted = Array.from(new Set(extracted.map((c) => c.trim().replace(/\n/g, " "))));
-
-  // 1. Try to match extracted citations to actual RAG context from Neo4j
-  for (const ext of uniqueExtracted) {
-    const extLower = ext.toLowerCase();
-    const matchedRagNode = context.find(
-      (r) =>
-        r.title.toLowerCase().includes(extLower) ||
-        r.content.toLowerCase().includes(extLower) ||
-        extLower.includes(r.title.toLowerCase())
+  const extracted = bestPath.match(CITATION_PATTERN) ?? [];
+  const unique = Array.from(new Set(extracted.map((c) => c.trim().replace(/\n/g, " "))));
+  for (const ext of unique) {
+    const node = context.find((r) =>
+      refMatchesNode(ext, {
+        title: r.title,
+        content: r.content,
+        pasal_number: (r as any).pasal_number,
+      }),
     );
-
-    if (matchedRagNode) {
-      if (!citations.some((c) => c.id === matchedRagNode.id)) {
-        citations.push({
-          id: matchedRagNode.id,
-          title: ext, // use the exact phrase the AI used
-          source: matchedRagNode.source,
-        });
-      }
+    if (node) {
+      if (!citations.some((c) => c.id === node.id))
+        citations.push({ id: node.id, title: ext, source: node.source });
     } else {
-      // 2. If it couldn't be found in RAG, it's Model Knowledge.
-      // We still include it because sometimes the AI knows a related law 
-      // the RAG index missed, but we explicitly label it.
       citations.push({
-        id: `ext-${Math.random().toString(36).substring(2, 9)}`,
+        id: `ext-${Math.random().toString(36).slice(2, 9)}`,
         title: ext,
-        source: "Model Knowledge",
+        source: "Pengetahuan Model",
       });
     }
   }
-
-  // 3. Ensure we always include the top 2 RAG items if the AI used RAG broadly
+  // Ensure we always include the top 2 RAG items if the AI used RAG broadly
   // but failed to perfectly cite it.
   if (context.length > 0 && citations.length === 0) {
-    context.slice(0, 2).forEach((r) => {
-      citations.push({
-        id: r.id,
-        title: r.title,
-        source: r.source,
-      });
-    });
+    context
+      .slice(0, 2)
+      .forEach((r) => citations.push({ id: r.id, title: r.title, source: r.source }));
   }
 
   return {
@@ -355,7 +330,7 @@ export async function reason(
     confidence: conf.score,
     confidence_level: conf.level,
     confidence_label: conf.label,
-    variance: Math.round(entropy * 1000) / 1000,
-    language: "en",
+    variance: Math.round((1 - agreement) * 1000) / 1000, // kept for back-compat
+    language: "id",
   };
 }

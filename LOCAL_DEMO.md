@@ -141,6 +141,25 @@ No application code needs to change — the demo behavior lives entirely behind 
 
 ---
 
+## Migrating after the retrieval upgrade
+
+If you already had CLARA running locally and pull in the document-grounded retrieval changes, re-run the migration steps so existing data picks up the new schema, embeddings, and document segmentation:
+
+```bash
+cd backend
+npm run init-schema      # adds/updates constraints + vector indexes for the new retrieval schema
+npm run reembed          # re-embeds the knowledge base with E5 query/passage prefixes
+npm run reprocess-docs   # re-segments stored documents into Pasal + ayat
+```
+
+- `init-schema` is idempotent — safe to re-run even if you've already initialized the database.
+- `reembed` re-generates embeddings for existing knowledge base entries so they use the correct E5 query/passage prefixing expected by the new retriever.
+- `reprocess-docs` re-segments previously ingested documents into structured Pasal/ayat units so the structural retriever can address them.
+
+If you're running the backend via Docker, these steps run automatically as part of the container `CMD` on the next rebuild (`docker compose up -d --build backend`) — no manual steps needed.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Cause / Fix |

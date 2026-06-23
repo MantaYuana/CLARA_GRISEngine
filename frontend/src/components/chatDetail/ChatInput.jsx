@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { yupResolver } from "@hookform/resolvers/yup";
 import * as yup from "yup";
 import { HiPaperAirplane, HiOutlineDocumentText } from "react-icons/hi2";
+
+const ANSWER_MODE_KEY = "clara_answer_mode";
 
 const schema = yup.object({
   message: yup
@@ -33,6 +35,16 @@ const ChatInput = ({ onSend, isLoading, selectedCount = 0, activeMode }) => {
 
   const textareaRef = useRef(null);
   const value = watch("message", "");
+
+  const [answerMode, setAnswerMode] = useState(
+    () => localStorage.getItem(ANSWER_MODE_KEY) || "natural",
+  );
+
+  const toggleAnswerMode = () => {
+    const next = answerMode === "natural" ? "raw" : "natural";
+    setAnswerMode(next);
+    localStorage.setItem(ANSWER_MODE_KEY, next);
+  };
 
   // Auto-resize textarea
   useEffect(() => {
@@ -86,6 +98,19 @@ const ChatInput = ({ onSend, isLoading, selectedCount = 0, activeMode }) => {
                      outline-none resize-none leading-relaxed max-h-28
                      disabled:opacity-50"
         />
+
+        {/* Answer mode toggle (raw/natural) */}
+        <button
+          type="button"
+          onClick={toggleAnswerMode}
+          title="Jawaban pasal: ringkas (apa adanya) atau dijelaskan"
+          className="px-2.5 py-1.5 rounded-xl text-xs font-medium shrink-0
+                     bg-gray-200 dark:bg-surfaceHover text-textSecondary dark:text-textSecondary
+                     hover:bg-gray-300 dark:hover:bg-border active:scale-95
+                     transition-all duration-150"
+        >
+          {answerMode === "natural" ? "Dijelaskan" : "Ringkas"}
+        </button>
 
         {/* Send button */}
         <button

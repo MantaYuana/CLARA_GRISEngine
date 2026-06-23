@@ -12,7 +12,7 @@ async function seedKnowledge(): Promise<void> {
   try {
     console.log("🌱 Seeding legal knowledge graph …");
 
-    // Laws 
+    // Laws
     await session.run(`
       MERGE (l1:Law { id: 'UU-13-2003' })
         SET l1.title = 'Undang-Undang No. 13 Tahun 2003 tentang Ketenagakerjaan',
@@ -32,7 +32,7 @@ async function seedKnowledge(): Promise<void> {
     `);
     console.log("  ✔ Laws seeded");
 
-    // Core Articles 
+    // Core Articles
     await session.run(`
       MATCH (uk:Law { id: 'UU-13-2003' })
       MATCH (uck:Law { id: 'UU-11-2020' })
@@ -97,51 +97,87 @@ async function seedKnowledge(): Promise<void> {
     `);
     console.log("  ✔ Articles seeded");
 
-    // Legal Concepts 
+    // Legal Concepts
+    // NOTE: every LegalConcept MUST have an `id` — symbolicRetrieval returns
+    // `n.id` and filters out null-id rows, so concepts without an id are invisible
+    // to the symbolic leg.
     await session.run(`
       MERGE (c1:LegalConcept { name: 'Wanprestasi' })
-        SET c1.description = 'Kegagalan salah satu pihak untuk memenuhi kewajiban dalam perjanjian tanpa alasan yang sah.',
+        SET c1.id = 'CONCEPT-WANPRESTASI',
+            c1.law_id = 'KUHPerdata',
+            c1.description = 'Kegagalan salah satu pihak untuk memenuhi kewajiban dalam perjanjian tanpa alasan yang sah.',
             c1.content = 'Wanprestasi terjadi ketika debitur tidak melaksanakan prestasinya sesuai isi perjanjian. Akibatnya, kreditur berhak menuntut ganti rugi berdasarkan Pasal 1243 KUHPerdata.',
             c1.related_articles = ['KUH-1243', 'KUH-1266', 'KUH-1267']
 
       MERGE (c2:LegalConcept { name: 'PHK' })
-        SET c2.description = 'Pemutusan Hubungan Kerja – pengakhiran hubungan kerja antara pengusaha dan pekerja.',
+        SET c2.id = 'CONCEPT-PHK',
+            c2.law_id = 'UU-13-2003',
+            c2.description = 'Pemutusan Hubungan Kerja – pengakhiran hubungan kerja antara pengusaha dan pekerja.',
             c2.content = 'PHK diatur dalam UU Ketenagakerjaan. Pengusaha wajib membayar pesangon, uang penghargaan masa kerja, dan penggantian hak sesuai Pasal 156.',
             c2.related_articles = ['UU13-156']
 
       MERGE (c3:LegalConcept { name: 'PKWT' })
-        SET c3.description = 'Perjanjian Kerja Waktu Tertentu – kontrak kerja dengan jangka waktu terbatas.',
+        SET c3.id = 'CONCEPT-PKWT',
+            c3.law_id = 'UU-13-2003',
+            c3.description = 'Perjanjian Kerja Waktu Tertentu – kontrak kerja dengan jangka waktu terbatas.',
             c3.content = 'PKWT berlaku maksimal 2 tahun dan dapat diperpanjang 1 tahun (Pasal 59 UU-13/2003). PKWT tidak boleh mensyaratkan masa percobaan.',
             c3.max_duration_years = 2,
             c3.related_articles = ['UU13-59']
 
       MERGE (c4:LegalConcept { name: 'Force Majeure' })
-        SET c4.description = 'Keadaan memaksa – peristiwa di luar kendali para pihak yang menghalangi pemenuhan perjanjian.',
+        SET c4.id = 'CONCEPT-FORCE-MAJEURE',
+            c4.law_id = 'KUHPerdata',
+            c4.description = 'Keadaan memaksa – peristiwa di luar kendali para pihak yang menghalangi pemenuhan perjanjian.',
             c4.content = 'Force majeure merupakan alasan pembenar tidak dipenuhinya prestasi. Klausula force majeure yang adil mencakup: bencana alam, perang, pandemi, tindakan pemerintah. Harus ada notifikasi dalam batas waktu tertentu.',
             c4.related_articles = ['KUH-1244', 'KUH-1245']
 
       MERGE (c5:LegalConcept { name: 'Penyitaan' })
-        SET c5.description = 'Klausula penyitaan paksa – klausula yang membolehkan kreditur menyita aset tanpa putusan pengadilan.',
+        SET c5.id = 'CONCEPT-PENYITAAN',
+            c5.law_id = 'KUHPerdata',
+            c5.description = 'Klausula penyitaan paksa – klausula yang membolehkan kreditur menyita aset tanpa putusan pengadilan.',
             c5.content = 'Klausula penyitaan paksa bertentangan dengan putusan Mahkamah Konstitusi. MK menyatakan bahwa penyitaan hanya dapat dilakukan atas dasar putusan pengadilan yang berkekuatan hukum tetap.',
             c5.severity = 'CRITICAL',
             c5.mk_ruling = 'MK/18/PUU-XVII/2019',
             c5.related_articles = []
 
       MERGE (c6:LegalConcept { name: 'Denda' })
-        SET c6.description = 'Klausula denda/penalti dalam perjanjian.',
+        SET c6.id = 'CONCEPT-DENDA',
+            c6.law_id = 'KUHPerdata',
+            c6.description = 'Klausula denda/penalti dalam perjanjian.',
             c6.content = 'Denda keterlambatan dan penalti kontrak yang wajar umumnya di bawah 5% per bulan. Denda di atas batas wajar dapat dianggap perjanjian riba dan bertentangan dengan OJK.',
             c6.max_penalty_percent_per_month = 5.0,
             c6.related_articles = ['KUH-1243', 'KUH-1267']
 
       MERGE (c7:LegalConcept { name: 'Bunga' })
-        SET c7.description = 'Klausula bunga dalam perjanjian hutang-piutang.',
+        SET c7.id = 'CONCEPT-BUNGA',
+            c7.law_id = 'KUHPerdata',
+            c7.description = 'Klausula bunga dalam perjanjian hutang-piutang.',
             c7.content = 'Bunga pinjaman yang wajar sesuai regulasi OJK maksimal 2% per bulan untuk pinjaman non-bank. Bunga di atas 2% per bulan berpotensi dikualifikasikan sebagai riba.',
             c7.max_interest_percent_per_month = 2.0,
             c7.related_articles = ['KUH-1320']
-    `);
-    console.log("  ✔ Legal concepts seeded");
 
-    // Clause Templates (for Smart Drafter) 
+      // Somasi — required precondition for a Wanprestasi claim (symbolic leg traverses
+      // Wanprestasi-[:REQUIRES]->Somasi).
+      MERGE (c8:LegalConcept { name: 'Somasi' })
+        SET c8.id = 'CONCEPT-SOMASI',
+            c8.law_id = 'KUHPerdata',
+            c8.description = 'Teguran/peringatan resmi (pernyataan lalai) agar debitur memenuhi kewajibannya sebelum dinyatakan wanprestasi.',
+            c8.content = 'Somasi (ingebrekestelling) wajib disampaikan kreditur untuk menyatakan debitur lalai sebelum menuntut ganti rugi atas wanprestasi (Pasal 1238 dan 1243 KUHPerdata).',
+            c8.related_articles = ['KUH-1243']
+
+      // PKWT condition nodes — targets of PKWT-[:HAS_CONDITION]->(cond) in the symbolic leg.
+      MERGE (cond1:Condition { id: 'PKWT-COND-DURATION' })
+        SET cond1.name = 'Batas Durasi PKWT',
+            cond1.law_id = 'UU-13-2003',
+            cond1.content = 'PKWT maksimal 2 tahun dan dapat diperpanjang 1 tahun (total 3 tahun). Melebihi batas tersebut, hubungan kerja demi hukum berubah menjadi PKWTT.'
+      MERGE (cond2:Condition { id: 'PKWT-COND-NO-PROBATION' })
+        SET cond2.name = 'Larangan Masa Percobaan',
+            cond2.law_id = 'UU-13-2003',
+            cond2.content = 'PKWT tidak boleh mensyaratkan masa percobaan kerja; jika disyaratkan, klausul masa percobaan tersebut batal demi hukum.'
+    `);
+    console.log("  ✔ Legal concepts seeded (incl. Somasi + PKWT conditions)");
+
+    // Clause Templates (for Smart Drafter)
     await session.run(`
       MERGE (t1:ClauseTemplate { id: 'mou-parties' })
         SET t1.document_type = 'MoU',
@@ -217,7 +253,7 @@ async function seedKnowledge(): Promise<void> {
     `);
     console.log("  ✔ Clause templates seeded (MoU, LoI, PKS)");
 
-    // Relationships between concepts and articles 
+    // Relationships between concepts and articles
     await session.run(`
       MATCH (wan:LegalConcept { name: 'Wanprestasi' }), (a1243:Article { id: 'KUH-1243' })
       MERGE (wan)-[:GOVERNED_BY]->(a1243)
@@ -229,6 +265,35 @@ async function seedKnowledge(): Promise<void> {
       MERGE (pkwt)-[:GOVERNED_BY]->(a59)
     `);
     console.log("  ✔ Concept–Article relationships created");
+
+    // Symbolic-leg relationships
+    // Wanprestasi REQUIRES a prior Somasi — drives queryWanprestasiSomasi().
+    await session.run(`
+      MATCH (wan:LegalConcept { name: 'Wanprestasi' }), (som:LegalConcept { name: 'Somasi' })
+      MERGE (wan)-[:REQUIRES]->(som)
+    `);
+
+    // PKWT HAS_CONDITION its constraint nodes — drives queryPkwtConditions().
+    await session.run(`
+      MATCH (pkwt:LegalConcept { name: 'PKWT' })
+      MATCH (cond:Condition)
+      WHERE cond.id IN ['PKWT-COND-DURATION', 'PKWT-COND-NO-PROBATION']
+      MERGE (pkwt)-[:HAS_CONDITION]->(cond)
+    `);
+
+    // Article-to-article cross references — drives queryArticleChain() (RELATED_TO*1..2).
+    await session.run(`
+      UNWIND [
+        ['UU13-59', 'UU13-156'],
+        ['KUH-1243', 'KUH-1266'],
+        ['KUH-1243', 'KUH-1267']
+      ] AS pair
+      MATCH (a:Article { id: pair[0] }), (b:Article { id: pair[1] })
+      MERGE (a)-[:RELATED_TO]->(b)
+    `);
+    console.log(
+      "  ✔ Symbolic relationships created (REQUIRES, HAS_CONDITION, RELATED_TO)",
+    );
 
     console.log("✅ Knowledge graph seeding complete.");
   } finally {

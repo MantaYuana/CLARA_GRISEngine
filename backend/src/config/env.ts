@@ -66,4 +66,12 @@ export const env = {
 
   // Retrieval Trace Visualization — set TRACE_ENABLED=false to omit trace from API responses
   TRACE_ENABLED: process.env.TRACE_ENABLED !== "false",
+
+  // Document-grounded retrieval
+  DOC_INJECT_TOKEN_BUDGET: parseInt(process.env.DOC_INJECT_TOKEN_BUDGET ?? "12000", 10),
+  RETRIEVAL_MIN_DENSE_SCORE: parseFloat(process.env.RETRIEVAL_MIN_DENSE_SCORE ?? "0.6"),
+  GROUNDEDNESS_FLOOR: parseFloat(process.env.GROUNDEDNESS_FLOOR ?? "0.5"),
+  DEFAULT_ANSWER_MODE: (process.env.DEFAULT_ANSWER_MODE ?? "natural") as
+    | "raw"
+    | "natural",
 };

@@ -19,7 +19,7 @@ export async function denseSearch(
   queryText: string,
   topK = 5,
 ): Promise<RetrievalResult[]> {
-  const queryEmbedding = await embedText(queryText);
+  const queryEmbedding = await embedText(queryText, "query");
   const session = await getSession();
 
   try {
