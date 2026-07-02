@@ -103,6 +103,41 @@ export interface TraceStructural {
   source: string; // e.g. "Struktur Dokumen"
 }
 
+/** Phase 1 — how the document became graph nodes (ingestion, at upload). */
+export interface JourneyIngestion {
+  ocrMethod: string | null; // "pdf-parse" | "gemini" | null (un-reprocessed doc)
+  pageCount: number | null;
+  rawTextLength: number | null;
+  pasalCount: number;
+  pasalList: {
+    pasal_number: number;
+    title: string;
+    ayatCount: number;
+    charCount: number;
+  }[];
+}
+
+/** Phase 2 — how the question became a deterministic lookup (per question). */
+export interface JourneyRetrieval {
+  kind: StructuralKind; // "count" | "fetch" | "list"
+  question: string;
+  parse: {
+    intent: StructuralKind;
+    matchedText: string; // the reference/keywords that drove routing
+    pasalNumber?: number;
+    ayatNumber?: number;
+  };
+  cypher: string; // the canonical query that ran (technical reveal)
+  found: boolean;
+  matched: { pasal_number: number; title: string }[];
+  answerMode: "raw" | "natural";
+}
+
+export interface TraceJourney {
+  ingestion: JourneyIngestion;
+  retrieval: JourneyRetrieval;
+}
+
 export interface RetrievalTrace {
   query: string;
   mode: TraceMode; // discriminator the drawer branches on
@@ -111,6 +146,7 @@ export interface RetrievalTrace {
   fusion: TraceFusion;
   graph: TraceGraph;
   structural?: TraceStructural;
+  journey?: TraceJourney; // present for structural answers built post-upgrade
   reasoning?: TraceReasoning; // absent for structural "raw" answers
   contextSource: "retrieval" | "raw_text" | "none" | "document_structure";
 }

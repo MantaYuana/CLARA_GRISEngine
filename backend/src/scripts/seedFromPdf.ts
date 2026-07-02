@@ -68,7 +68,7 @@ async function seedFile(filePath: string, index: number, total: number): Promise
 
   // OCR
   console.log("       Extracting text...");
-  const rawText = await extractTextFromPdf(pdfBuffer);
+  const { text: rawText } = await extractTextFromPdf(pdfBuffer);
   console.log(`       Extracted: ${rawText.length} characters`);
 
   // Segment

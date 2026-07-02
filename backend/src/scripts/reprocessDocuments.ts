@@ -30,7 +30,9 @@ async function run() {
         await s3.run(
           `MATCH (cc:ContractClause { document_id: $id }) WHERE cc.pasal_number IS NOT NULL
            WITH count(DISTINCT cc.pasal_number) AS n
-           MATCH (d:Document { id: $id }) SET d.pasal_count = n`,
+           MATCH (d:Document { id: $id })
+           SET d.pasal_count = n,
+               d.raw_text_length = size(d.raw_text)`,
           { id },
         );
       } finally {

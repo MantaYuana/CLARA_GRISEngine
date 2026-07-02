@@ -58,6 +58,8 @@ async function saveDocumentNode(
   fileBase64: string,
   rawText: string,
   pageCount: number | null,
+  ocrMethod: string | null,
+  rawTextLength: number,
   clauseCount: number,
 ): Promise<void> {
   const session = await getSession();
@@ -65,14 +67,16 @@ async function saveDocumentNode(
     await session.run(
       `
       MERGE (d:Document { id: $id })
-      SET d.user_id      = $userId,
-          d.filename     = $filename,
-          d.mime_type    = $mimeType,
-          d.file_base64  = $fileBase64,
-          d.raw_text     = $rawText,
-          d.page_count   = $pageCount,
-          d.clause_count = $clauseCount,
-          d.created_at   = datetime()
+      SET d.user_id         = $userId,
+          d.filename        = $filename,
+          d.mime_type       = $mimeType,
+          d.file_base64     = $fileBase64,
+          d.raw_text        = $rawText,
+          d.page_count      = $pageCount,
+          d.ocr_method      = $ocrMethod,
+          d.raw_text_length = $rawTextLength,
+          d.clause_count    = $clauseCount,
+          d.created_at      = datetime()
       `,
       {
         id: documentId,
@@ -82,6 +86,8 @@ async function saveDocumentNode(
         fileBase64,
         rawText,
         pageCount,
+        ocrMethod,
+        rawTextLength,
         clauseCount,
       },
     );
@@ -149,6 +155,8 @@ router.post(
         fileBase64,
         ocrResult.raw_text,
         ocrResult.page_count ?? null,
+        ocrResult.ocr_method ?? null,
+        ocrResult.raw_text.length,
         ocrResult.clauses.length,
       );
 

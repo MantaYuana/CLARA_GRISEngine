@@ -32,6 +32,7 @@ import RrfTable from "./trace/RrfTable.jsx";
 import TraceGraph from "./trace/TraceGraph.jsx";
 import ConfidencePanel from "./trace/ConfidencePanel.jsx";
 import StructuralPanel from "./trace/StructuralPanel.jsx";
+import JourneyPanel from "./trace/JourneyPanel.jsx";
 
 // ── Section wrapper ────────────────────────────────────────────────────────────
 const Section = ({ title, step, children, defaultOpen = true }) => {
@@ -132,6 +133,7 @@ const RetrievalTraceDrawer = ({ open, onClose, trace }) => {
     graph,
     reasoning,
     structural,
+    journey,
     answerMode,
     contextSource,
   } = trace;
@@ -200,9 +202,13 @@ const RetrievalTraceDrawer = ({ open, onClose, trace }) => {
 
             {isStructural ? (
               <>
-                {/* ── Structural mode: deterministic Pasal lookup ──────── */}
-                <Section title="Structural Lookup" step={1} defaultOpen>
-                  <StructuralPanel structural={structural} answerMode={answerMode} />
+                {/* ── Structural mode: deterministic retrieval journey ── */}
+                <Section title="Retrieval Journey" step={1} defaultOpen>
+                  {journey ? (
+                    <JourneyPanel journey={journey} />
+                  ) : (
+                    <StructuralPanel structural={structural} answerMode={answerMode} />
+                  )}
                 </Section>
 
                 {reasoning && (

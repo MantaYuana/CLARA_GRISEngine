@@ -33,6 +33,7 @@ export interface Clause {
 export interface OcrResult {
   raw_text: string;
   language: string;
+  ocr_method: string;
   clauses: Clause[];
   page_count?: number;
 }
@@ -234,38 +235,49 @@ export async function extractTextFromImage(
 
 // PDF OCR
 
-export async function extractTextFromPdf(buffer: Buffer): Promise<string> {
+export interface PdfExtraction {
+  text: string;
+  method: "pdf-parse" | "gemini";
+  pageCount: number | null;
+}
+
+export async function extractTextFromPdf(buffer: Buffer): Promise<PdfExtraction> {
   let text = "";
+  let pageCount: number | null = null;
 
   try {
     const pdf = new PDFParse({ data: new Uint8Array(buffer) });
     const result = await pdf.getText();
     text = result.text || "";
+    pageCount = typeof result.total === "number" ? result.total : null;
     await pdf.destroy();
   } catch (err) {
     console.warn("[OCR] pdf-parse error:", err);
   }
 
-  // Fallback to Gemini only if pdf-parse fails to extract text
-  if (!text || text.trim().length === 0) {
-    console.warn("[OCR] pdf-parse returned empty text; falling back to Gemini...");
-    const model = genAI.getGenerativeModel({ model: env.GEMINI_MODEL });
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          data: buffer.toString("base64"),
-          mimeType: "application/pdf",
-        },
-      },
-      "Extract all text in this PDF document verbatim, maintain the structure of articles, paragraphs, and headings. Do not add any comments. Output format: raw text only.",
-    ]);
-    text = result.response.text().trim();
+  // Local extraction succeeded.
+  if (text && text.trim().length > 0) {
+    return { text, method: "pdf-parse", pageCount };
   }
+
+  // Fallback to Gemini only if pdf-parse fails to extract text.
+  console.warn("[OCR] pdf-parse returned empty text; falling back to Gemini...");
+  const model = genAI.getGenerativeModel({ model: env.GEMINI_MODEL });
+  const result = await model.generateContent([
+    {
+      inlineData: {
+        data: buffer.toString("base64"),
+        mimeType: "application/pdf",
+      },
+    },
+    "Extract all text in this PDF document verbatim, maintain the structure of articles, paragraphs, and headings. Do not add any comments. Output format: raw text only.",
+  ]);
+  text = result.response.text().trim();
 
   if (!text) {
     throw new Error("OCR returned no text for the provided PDF.");
   }
-  return text;
+  return { text, method: "gemini", pageCount: null };
 }
 
 // Clause Segmentation
@@ -341,11 +353,18 @@ export async function processUploadedFile(
   mimeType: string,
 ): Promise<OcrResult> {
   let rawText: string;
+  let ocrMethod: string;
+  let pageCount: number | undefined;
 
   if (mimeType === "application/pdf") {
-    rawText = await extractTextFromPdf(buffer);
+    const ext = await extractTextFromPdf(buffer);
+    rawText = ext.text;
+    ocrMethod = ext.method;
+    pageCount = ext.pageCount ?? undefined;
   } else if (mimeType.startsWith("image/")) {
     rawText = await extractTextFromImage(buffer, mimeType);
+    ocrMethod = "gemini";
+    pageCount = undefined;
   } else {
     throw new Error(`Unsupported MIME type for OCR: ${mimeType}`);
   }
@@ -358,6 +377,8 @@ export async function processUploadedFile(
   return {
     raw_text: rawText,
     language: "en",
+    ocr_method: ocrMethod,
     clauses,
+    page_count: pageCount,
   };
 }

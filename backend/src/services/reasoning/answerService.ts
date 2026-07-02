@@ -12,6 +12,7 @@ import { hybridRetrieval } from "../retrieval/hybridRetrieval";
 import { reason, ReasoningResult } from "./reasoningService";
 import { getSession } from "../../config/neo4j";
 import type { RetrievalTrace } from "../retrieval/retrievalTrace";
+import { buildStructuralJourney } from "../retrieval/documentJourney";
 
 const genAI = new GoogleGenerativeAI(env.GOOGLE_AI_API_KEY);
 
@@ -123,6 +124,10 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutput> 
     const answer =
       answerMode === "natural" ? await phraseNaturally(question, facts) : facts;
 
+    const matched = data.pasal
+      ? [{ pasal_number: data.pasal.pasal_number, title: data.pasal.title }]
+      : data.list;
+
     trace.mode = "structural";
     trace.answerMode = answerMode;
     trace.contextSource = "document_structure";
@@ -130,9 +135,7 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutput> 
       kind: routed.kind.replace("structural_", "") as "count" | "fetch" | "list",
       pasalNumber: routed.pasalNumber,
       ayatNumber: routed.ayatNumber,
-      matched: data.pasal
-        ? [{ pasal_number: data.pasal.pasal_number, title: data.pasal.title }]
-        : data.list,
+      matched,
       source: "Struktur Dokumen",
     };
     // Honest confidence even for deterministic lookups: a "not found" must not read green.
@@ -140,6 +143,20 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutput> 
       routed.kind === "structural_fetch" ? data.pasal !== null : data.list.length > 0;
     const score = found ? 0.99 : 0.4;
     const level: "green" | "yellow" | "red" = found ? "green" : "yellow";
+
+    // The journey is a trace/explainability aid — never let its failure break a valid answer.
+    try {
+      trace.journey = await buildStructuralJourney({
+        documentId,
+        routed,
+        question,
+        matched,
+        found,
+        answerMode,
+      });
+    } catch (e) {
+      console.warn("[answerService] journey build failed:", (e as Error).message);
+    }
 
     // Deterministic facts → grounded by construction; natural mode still surfaces a confidence read.
     trace.reasoning =
