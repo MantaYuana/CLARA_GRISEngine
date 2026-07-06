@@ -67,6 +67,7 @@ export interface TraceGraphEdge {
   from: string;
   to: string;
   type: string; // relationship type, e.g. PART_OF, REQUIRES, RELATED_TO, CITES
+  context?: string; // article / context label derived from the relationship (e.g. "Pasal 59")
 }
 
 export interface TraceGraph {
@@ -91,7 +92,32 @@ export interface TraceReasoning {
   confidenceLevel: "green" | "yellow" | "red";
 }
 
-export type TraceMode = "hybrid" | "structural";
+export type TraceMode = "hybrid" | "structural" | "draft";
+
+// ── Drafter (contract drafting) trace types ─────────────────────────────────
+
+export interface DrafterStep {
+  name: string;
+  status: "ok" | "warn" | "error";
+  detail?: string;
+}
+
+export interface DrafterTemplateInfo {
+  id: string;
+  title: string;
+  order: number;
+}
+
+export interface DrafterTrace {
+  mode: "draft";
+  steps: DrafterStep[];
+  documentType: string;
+  bindingWarning: boolean;
+  extractedFields: Record<string, string>;
+  completeness: { score: number; missingCritical: string[] };
+  templates: DrafterTemplateInfo[];
+  guardrail?: { is_safe: boolean; warning_count: number; critical_violations: unknown[] };
+}
 export type StructuralKind = "count" | "fetch" | "list";
 
 /** Structural (deterministic) answer trace — no legs / RRF / embeddings. */

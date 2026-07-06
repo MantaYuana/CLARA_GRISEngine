@@ -39,6 +39,7 @@ const parseDrafterResponse = (data) => {
   const clarifyingQuestions = parsed?.clarifying_questions ?? [];
   const draft = parsed?.draft ?? null;
   const pdfBase64 = parsed?.pdf_base64 ?? null;
+  const trace = parsed?.trace ?? null;
 
   // Natural language answer from the AI — used as the main bubble text
   const content = parsed?.message ?? parsed?.content ?? parsed?.answer ?? "";
@@ -52,6 +53,7 @@ const parseDrafterResponse = (data) => {
     clarifyingQuestions,
     draft,
     pdfBase64,
+    trace,
   };
 };
 
@@ -93,6 +95,7 @@ export const drafterChat = async ({ session_id, message, history = [] }) => {
     clarifyingQuestions,
     draft,
     pdfBase64,
+    trace,
   } = parseDrafterResponse(data);
 
   console.log("[drafterService] Parsed →", {
@@ -114,5 +117,6 @@ export const drafterChat = async ({ session_id, message, history = [] }) => {
     clarifyingQuestions,
     draft,
     pdfBase64,
+    trace,
   };
 };
