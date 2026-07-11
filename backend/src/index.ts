@@ -15,7 +15,7 @@ import cors from "cors";
 import session from "express-session";
 import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env";
-import { getDriver, verifyConnectivity } from "./config/neo4j";
+import { verifyConnectivity } from "./config/neo4j";
 import { initSchema } from "./scripts/initSchema";
 import { swaggerSpec } from "./config/swagger";
 import { configuredPassport } from "./config/passport";
@@ -26,7 +26,6 @@ import drafterRouter from "./routes/drafter";
 import authRouter from "./routes/auth";
 import chatRouter from "./routes/chat";
 import { verifyToken } from "./middleware/auth";
-import { seedKnowledge } from "./scripts/seedKnowledge";
 // Start the analysis worker (side-effect import)
 import "./workers/analysisWorker";
 
@@ -87,43 +86,12 @@ app.use((_req, res) => {
     res.status(404).json({ status: "error", code: "NOT_FOUND", message: "Route not found" });
 });
 
-// Global error handler — catches Multer errors (file too large, wrong type),
-// unhandled async rejections from Express 5, and any other middleware errors.
-app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    console.error("[unhandled]", err);
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const code = err instanceof Error && "code" in err ? (err as any).code : "INTERNAL_ERROR";
-    res.status(500).json({ status: "error", code, message });
-});
-
 // Startup   ─
 async function start(): Promise<void> {
     try {
         await verifyConnectivity();
         await initSchema();
         console.log("✅ Schema ready.");
-
-        // Auto-seed knowledge graph if empty (first-time setup)
-        const checkSession = getDriver().session();
-        try {
-            const countResult = await checkSession.run(
-                "MATCH (n) WHERE n:Article OR n:LegalConcept RETURN count(*) AS cnt",
-            );
-            const count = countResult.records[0]?.get("cnt")?.toNumber() ?? 0;
-            if (count === 0) {
-                console.log("🌱 Knowledge graph is empty — seeding...");
-                await seedKnowledge();
-                // Refresh fulltext index so BM25 immediately finds the seeded data
-                try {
-                    await checkSession.run("CALL db.index.fulltext.awaitEventuallyConsistentIndexRefresh()");
-                } catch { /* older Neo4j versions may not have this procedure */ }
-                console.log("✅ Knowledge graph seeded.");
-            } else {
-                console.log(`ℹ️  Knowledge graph already has ${count} nodes.`);
-            }
-        } finally {
-            await checkSession.close();
-        }
     } catch (err) {
         console.warn("Neo4j not available on startup — vector search will return empty results.");
         console.warn("Run: docker-compose up -d to start Neo4j.");

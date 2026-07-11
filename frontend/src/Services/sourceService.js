@@ -31,7 +31,6 @@ export const analyzeFile = async (file) => {
     headers: {
       ...getAuthHeader(),
     },
-    timeout: 120000, // 2 min — OCR + embedding can be slow
   });
 
   console.log("[sourceService] ✅ Analyze success for:", file.name);

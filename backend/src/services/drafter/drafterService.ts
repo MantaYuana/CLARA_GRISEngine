@@ -34,17 +34,6 @@ export interface DrafterRequest {
   userId?: string; // set from JWT auth
 }
 
-export interface DrafterTrace {
-  mode: "draft";
-  steps: { name: string; status: "ok" | "warn" | "error"; detail?: string }[];
-  documentType: string;
-  bindingWarning: boolean;
-  extractedFields: Record<string, string>;
-  completeness: { score: number; missingCritical: string[] };
-  templates: { id: string; title: string; order: number }[];
-  guardrail?: { is_safe: boolean; warning_count: number; critical_violations: unknown[] };
-}
-
 export interface DrafterResponse {
   status: DrafterStatus;
   document_type?: DocumentType;
@@ -59,7 +48,6 @@ export interface DrafterResponse {
     warning_count: number;
     critical_violations: unknown[];
   };
-  trace?: DrafterTrace;
 }
 
 interface ExtractedFields {
@@ -592,30 +580,12 @@ export async function runDrafterTurn(req: DrafterRequest): Promise<DrafterRespon
     .join(" ");
   const binding_warning = documentType === "MoU" && hasBindingTerms(allUserText);
 
-  // ── Initialize trace ──────────────────────────────────────────────────
-  const trace: DrafterTrace = {
-    mode: "draft",
-    steps: [{ name: "classify_intent", status: "ok", detail: `Classified as ${documentType}` }],
-    documentType,
-    bindingWarning: binding_warning,
-    extractedFields: {},
-    completeness: { score: 0, missingCritical: [] },
-    templates: [],
-    guardrail: undefined,
-  };
-
   // 3. Extract fields
   const fields = await extractFields(req.message, historyForFunctions, documentType);
-
-  trace.extractedFields = fields as Record<string, string>;
-  trace.steps.push({ name: "extract_fields", status: "ok", detail: `${Object.keys(fields).length} fields extracted` });
 
   // 4. Confidence gate (Module 5)
   const { score, missingCritical } = assessCompleteness(fields, documentType);
   const MIN_CONFIDENCE = env.DRAFTER_MIN_CONFIDENCE;
-
-  trace.completeness = { score, missingCritical };
-  trace.steps.push({ name: "completeness_check", status: score < MIN_CONFIDENCE ? "warn" : "ok", detail: `Score: ${score.toFixed(2)}` });
 
   if (score < MIN_CONFIDENCE) {
     await persistDrafterSession(req.session_id, userId, fields, documentType).catch(
@@ -638,7 +608,6 @@ export async function runDrafterTurn(req: DrafterRequest): Promise<DrafterRespon
       document_type: documentType,
       binding_warning,
       clarifying_questions: [question],
-      trace,
     };
   }
 
@@ -652,9 +621,6 @@ export async function runDrafterTurn(req: DrafterRequest): Promise<DrafterRespon
   if (templates.length === 0) {
     templates = DEFAULT_TEMPLATES[documentType];
   }
-
-  trace.templates = templates.map((t) => ({ id: t.id, title: t.title, order: t.order }));
-  trace.steps.push({ name: "fetch_templates", status: "ok", detail: `${templates.length} clause templates fetched` });
 
   // 6. Assemble draft
   const documentNumber = generateDocumentNumber(documentType);
@@ -678,13 +644,9 @@ export async function runDrafterTurn(req: DrafterRequest): Promise<DrafterRespon
       warning_count: gr.warning_count,
       critical_violations: gr.critical_violations,
     };
-    trace.guardrail = guardrailResult;
-    trace.steps.push({ name: "guardrail", status: guardrailResult.is_safe ? "ok" : "warn", detail: `${guardrailResult.warning_count} warnings` });
   } catch {
     // Guardrail failure doesn't block draft delivery
   }
-
-  trace.steps.push({ name: "assemble_draft", status: "ok", detail: "Draft generated" });
 
   await persistDrafterSession(req.session_id, userId, fields, documentType).catch(
     () => { },
@@ -699,6 +661,5 @@ export async function runDrafterTurn(req: DrafterRequest): Promise<DrafterRespon
     pdf_base64,
     action_buttons: pdf_base64 ? ["Accept", "Revise"] : undefined,
     guardrail: guardrailResult,
-    trace,
   };
 }
