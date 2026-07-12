@@ -123,6 +123,7 @@ const useChat = () => {
           clarifyingQuestions,
           draft,
           pdfBase64,
+          trace,
         } = await drafterChat({
           session_id: currentSessionId,
           message: message.trim(),
@@ -137,6 +138,7 @@ const useChat = () => {
           clarifyingQuestions: clarifyingQuestions ?? [],
           draft: draft ?? null,
           pdfBase64: pdfBase64 ?? null,
+          trace: trace ?? null,
         });
       } else {
         const { content, confidenceScore, citations, trace } = await sendMessage({

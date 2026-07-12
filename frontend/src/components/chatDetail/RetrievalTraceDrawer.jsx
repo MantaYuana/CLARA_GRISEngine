@@ -33,6 +33,7 @@ import TraceGraph from "./trace/TraceGraph.jsx";
 import ConfidencePanel from "./trace/ConfidencePanel.jsx";
 import StructuralPanel from "./trace/StructuralPanel.jsx";
 import JourneyPanel from "./trace/JourneyPanel.jsx";
+import DraftTracePanel from "./trace/DraftTracePanel.jsx";
 
 // ── Section wrapper ────────────────────────────────────────────────────────────
 const Section = ({ title, step, children, defaultOpen = true }) => {

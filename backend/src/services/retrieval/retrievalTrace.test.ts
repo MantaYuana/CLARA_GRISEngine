@@ -305,14 +305,24 @@ describe("fetchSubgraphEdges", () => {
       records: [
         {
           get: (field: string) => {
-            const row: Record<string, string> = { from: "a1", to: "a2", type: "CITES" };
-            return row[field];
+            const row: Record<string, string | null> = {
+              from: "a1", to: "a2", type: "CITES",
+              fromNumber: null, toNumber: null,
+              fromName: null, toName: null,
+              fromTitle: null, toTitle: null,
+            };
+            return row[field] ?? null;
           },
         },
         {
           get: (field: string) => {
-            const row: Record<string, string> = { from: "a2", to: "a3", type: "PART_OF" };
-            return row[field];
+            const row: Record<string, string | null> = {
+              from: "a2", to: "a3", type: "PART_OF",
+              fromNumber: "Pasal 59", toNumber: null,
+              fromName: null, toName: null,
+              fromTitle: null, toTitle: "Undang-Undang No. 13 Tahun 2003",
+            };
+            return row[field] ?? null;
           },
         },
       ],
@@ -327,8 +337,10 @@ describe("fetchSubgraphEdges", () => {
     expect(params.ids).toEqual(["a1", "a2", "a3"]);
 
     expect(edges).toHaveLength(2);
-    expect(edges[0]).toEqual({ from: "a1", to: "a2", type: "CITES" });
-    expect(edges[1]).toEqual({ from: "a2", to: "a3", type: "PART_OF" });
+    // CITES: default case – no labels on either node → context undefined
+    expect(edges[0]).toEqual({ from: "a1", to: "a2", type: "CITES", context: undefined });
+    // PART_OF: to has title "Undang-Undang No. 13 Tahun 2003" → context uses title fallback
+    expect(edges[1]).toEqual({ from: "a2", to: "a3", type: "PART_OF", context: "Undang-Undang No. 13 Tahun 2003" });
     expect(mockClose).toHaveBeenCalled();
   });
 

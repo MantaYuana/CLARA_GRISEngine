@@ -12,6 +12,7 @@
  * can merge them with dense + BM25 results via RRF.
  */
 import { getSession } from "../../config/neo4j";
+import neo4j from "neo4j-driver";
 import type { RetrievalResult } from "./denseRetrieval";
 
 // Individual symbolic queries 
@@ -135,7 +136,7 @@ async function queryArticleChain(
         b.law_id        AS law_id
       LIMIT $topK
       `,
-            { keyword, topK },
+            { keyword, topK: neo4j.int(topK) },
         );
 
         return result.records
@@ -213,41 +214,48 @@ export async function symbolicSearch(
     // If no intent detected, do a generic concept lookup by keyword
     if (promises.length === 0) {
         const session = await getSession();
+        // Break into individual keywords so "Apa itu wanprestasi" matches "wanprestasi"
+        const raw = query.replace(/[^a-zA-Z0-9\s]/g, "").trim();
+        const words = raw.split(/\s+/).filter(Boolean).slice(0, 8);
         promises.push(
-            session
-                .run(
-                    `
-          MATCH (n)
-          WHERE (n:LegalConcept OR n:Article)
-            AND (toLower(n.name)    CONTAINS toLower($kw)
-              OR toLower(n.content) CONTAINS toLower($kw))
-          RETURN
-            n.id           AS id,
-            labels(n)[0]   AS label,
-            COALESCE(n.name, n.number, n.id) AS title,
-            COALESCE(n.content, n.description, '') AS content,
-            0.70           AS score,
-            COALESCE(n.law_id, 'Indonesia Law') AS source,
-            n.law_id       AS law_id
-          LIMIT $topK
-          `,
-                    { kw: query.slice(0, 60), topK },
-                )
-                .then((r) =>
-                    r.records
-                        .filter((rec) => rec.get("id"))
-                        .map((rec) => ({
-                            id: rec.get("id") as string,
-                            label: rec.get("label") as RetrievalResult["label"],
-                            title: rec.get("title") as string,
-                            content: rec.get("content") as string,
-                            score: rec.get("score") as number,
-                            source: rec.get("source") as string,
-                            law_id: rec.get("law_id") as string | undefined,
-                        })),
-                )
-                .catch(() => [] as RetrievalResult[])
-                .finally(() => session.close()),
+            words.length > 0
+                ? session
+                      .run(
+                          `
+            MATCH (n)
+            WHERE (n:LegalConcept OR n:Article)
+              AND ANY(w IN $words WHERE
+                toLower(n.name)    CONTAINS toLower(w)
+                OR toLower(n.title)   CONTAINS toLower(w)
+                OR toLower(n.content) CONTAINS toLower(w))
+            RETURN
+              n.id           AS id,
+              labels(n)[0]   AS label,
+              COALESCE(n.name, n.number, n.title, n.id) AS title,
+              COALESCE(n.content, n.description, '') AS content,
+              0.70           AS score,
+              COALESCE(n.law_id, 'Indonesia Law') AS source,
+              n.law_id       AS law_id
+            LIMIT $topK
+            `,
+                          { words, topK: neo4j.int(topK) },
+                      )
+                      .then((r) =>
+                          r.records
+                              .filter((rec) => rec.get("id"))
+                              .map((rec) => ({
+                                  id: rec.get("id") as string,
+                                  label: rec.get("label") as RetrievalResult["label"],
+                                  title: rec.get("title") as string,
+                                  content: rec.get("content") as string,
+                                  score: rec.get("score") as number,
+                                  source: rec.get("source") as string,
+                                  law_id: rec.get("law_id") as string | undefined,
+                              })),
+                      )
+                      .catch(() => [] as RetrievalResult[])
+                      .finally(() => session.close())
+                : Promise.resolve([] as RetrievalResult[]).finally(() => session.close()),
         );
     }
 

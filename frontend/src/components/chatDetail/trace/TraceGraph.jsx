@@ -3,7 +3,7 @@
  * Props: graph: { nodes[], edges[] }, fusion: { items[] }, query: string
  */
 import { useMemo } from "react";
-import { ReactFlow, Background, Controls } from "@xyflow/react";
+import { ReactFlow, Background, Controls, Handle, Position } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { LEG_COLORS } from "./LegScores.jsx";
 
@@ -11,6 +11,26 @@ const truncate = (str, max = 28) =>
   str && str.length > max ? str.slice(0, max) + "…" : (str ?? "");
 
 const QUERY_NODE_ID = "__query__";
+
+/** Custom node with native title tooltip showing full filename on hover */
+function GraphNode({ data, style }) {
+  return (
+    <div
+      style={{
+        ...style,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        minWidth: 110,
+      }}
+      title={data.fullLabel ?? data.label}
+    >
+      <Handle type="target" position={Position.Top} />
+      {data.label}
+      <Handle type="source" position={Position.Bottom} />
+    </div>
+  );
+}
 
 /** Compute (x, y) for node[i] out of total on a circle of radius r around cx,cy */
 const radialPos = (i, total, cx, cy, r) => {
@@ -62,31 +82,32 @@ const TraceGraph = ({ graph, fusion, query }) => {
   const graphEdges = graph?.edges ?? [];
   const fusionItems = fusion?.items ?? [];
 
-  // Center of the canvas
+  // Center of the canvas — larger radius for more spacing
   const CX = 400;
-  const CY = 200;
-  const RADIUS = 160;
+  const CY = 260;
 
   // Build React Flow nodes — always called (hooks rules: no early return before useMemo)
   const rfNodes = useMemo(() => {
+    // Dynamic radius based on node count for consistent spacing
+    const RADIUS = Math.max(200, Math.min(320, (graphNodes.length + 1) * 45));
     const nodes = [];
 
-    // Central query node
+    // Central query node (no custom type — default handles top/bottom)
     nodes.push({
       id: QUERY_NODE_ID,
-      position: { x: CX - 70, y: CY - 18 },
+      position: { x: CX - 75, y: CY - 20 },
       data: { label: truncate(query, 32) },
       style: {
         background: "#bb11ee",
         color: "#fff",
         border: "2px solid #bb11ee",
-        borderRadius: 12,
+        borderRadius: 14,
         fontSize: 11,
-        fontWeight: 600,
-        padding: "6px 10px",
-        maxWidth: 140,
+        fontWeight: 700,
+        padding: "8px 14px",
+        maxWidth: 160,
         textAlign: "center",
-        boxShadow: "0 0 12px rgba(187,17,238,0.4)",
+        boxShadow: "0 0 16px rgba(187,17,238,0.5)",
       },
     });
 
@@ -102,18 +123,24 @@ const TraceGraph = ({ graph, fusion, query }) => {
 
       nodes.push({
         id: String(gn.id),
-        position: { x: pos.x - 60, y: pos.y - 18 },
-        data: { label: truncate(gn.title ?? gn.label, 26) },
+        type: "graphNode",
+        position: { x: pos.x - 65, y: pos.y - 14 },
+        data: {
+          label: gn.source ?? gn.label,
+          fullLabel: gn.source,
+        },
         style: {
-          background: `${color}22`,
+          background: `${color}18`,
           color: "#f0edf5",
-          border: `2px solid ${color}`,
-          borderRadius: 10,
-          fontSize: 10,
-          padding: "5px 8px",
-          maxWidth: 130,
+          border: `1.5px solid ${color}`,
+          borderRadius: 8,
+          fontSize: 9,
+          fontWeight: 600,
+          padding: "5px 10px",
+          maxWidth: 150,
+          minWidth: 110,
           textAlign: "center",
-          boxShadow: `0 0 8px ${color}${Math.round(glowAlpha * 255)
+          boxShadow: `0 0 10px ${color}${Math.round(glowAlpha * 255)
             .toString(16)
             .padStart(2, "0")}`,
         },
@@ -127,38 +154,49 @@ const TraceGraph = ({ graph, fusion, query }) => {
   const rfEdges = useMemo(() => {
     const edges = [];
 
-    // Query -> each graph node
+    // Query -> each graph node — show the article/pasal label on the edge
     graphNodes.forEach((gn) => {
       const primaryLeg = getPrimaryLeg(gn, fusionItems);
       const color = legColor(primaryLeg);
       const fusedScore = gn.fusedScore ?? 0;
       const strokeWidth = Math.min(6, 1 + fusedScore * 8);
+      const pasalLabel = truncate(gn.title ?? gn.label, 36);
 
       edges.push({
         id: `q->${gn.id}`,
         source: QUERY_NODE_ID,
         target: String(gn.id),
+        label: pasalLabel,
         style: { stroke: color, strokeWidth },
+        labelStyle: { fill: "#fff", fontSize: 9, fontWeight: 600 },
+        labelBgStyle: { fill: "#1e1b24", fillOpacity: 0.85 },
+        labelBgPadding: [4, 3],
+        labelBgBorderRadius: 5,
         animated: false,
       });
     });
 
-    // KG relationship edges from graph.edges
+    // KG relationship edges from graph.edges — show pasal/context on the line
     graphEdges.forEach((ge, idx) => {
       edges.push({
         id: `kg-${idx}-${ge.from}-${ge.to}`,
         source: String(ge.from),
         target: String(ge.to),
-        label: ge.type ?? "",
-        style: { stroke: "#6b7280", strokeWidth: 1.5, strokeDasharray: "4 3" },
-        labelStyle: { fill: "#a09aad", fontSize: 9 },
-        labelBgStyle: { fill: "#24212a", fillOpacity: 0.8 },
+        label: ge.context ?? ge.type ?? "",
+        style: { stroke: "#6b7280", strokeWidth: 2, strokeDasharray: "6 4" },
+        labelStyle: { fill: "#d1d0d6", fontSize: 10, fontWeight: 600 },
+        labelBgStyle: { fill: "#1e1b24", fillOpacity: 0.9 },
+        labelBgPadding: [6, 4],
+        labelBgBorderRadius: 6,
         animated: false,
       });
     });
 
     return edges;
   }, [graphNodes, graphEdges, fusionItems]);
+
+  // Register custom node types (stable reference, never changes)
+  const nodeTypes = useMemo(() => ({ graphNode: GraphNode }), []);
 
   // Guard placed AFTER all hooks
   if (!graph || (graphNodes.length === 0 && graphEdges.length === 0)) {
@@ -174,22 +212,24 @@ const TraceGraph = ({ graph, fusion, query }) => {
       {/* Canvas */}
       <div
         className="w-full rounded-xl overflow-hidden border dark:border-border border-gray-200"
-        style={{ height: 360 }}
+        style={{ height: 500, background: "#16131c" }}
       >
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
+          nodeTypes={nodeTypes}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
+          fitViewOptions={{ padding: 0.3 }}
           nodesDraggable
           nodesConnectable={false}
           elementsSelectable={false}
           proOptions={{ hideAttribution: true }}
+          defaultEdgeOptions={{ style: { strokeWidth: 2 }, labelStyle: { fontWeight: 600 } }}
         >
-          <Background color="#3a3444" gap={20} size={1} />
+          <Background color="#2a2533" gap={24} size={1} />
           <Controls
             style={{
-              background: "#2d2838",
+              background: "#1e1b24",
               border: "1px solid #3a3444",
               borderRadius: 8,
             }}
@@ -198,32 +238,32 @@ const TraceGraph = ({ graph, fusion, query }) => {
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap items-center gap-3 px-1 py-1">
+      <div className="flex flex-wrap items-center gap-4 px-1 py-1">
         {Object.entries(LEG_COLORS).map(([name, color]) => (
           <div key={name} className="flex items-center gap-1.5">
             <span
-              className="w-2.5 h-2.5 rounded-full shrink-0"
+              className="w-3 h-3 rounded-full shrink-0"
               style={{ backgroundColor: color }}
             />
-            <span className="text-[10px] dark:text-textSecondary text-gray-600 capitalize">
+            <span className="text-[11px] dark:text-textSecondary text-gray-500 capitalize">
               {name}
             </span>
           </div>
         ))}
         <div className="flex items-center gap-1.5">
-          <svg width="18" height="6" viewBox="0 0 18 6">
+          <svg width="22" height="8" viewBox="0 0 22 8">
             <line
               x1="0"
-              y1="3"
-              x2="18"
-              y2="3"
+              y1="4"
+              x2="22"
+              y2="4"
               stroke="#6b7280"
-              strokeWidth="1.5"
-              strokeDasharray="4 3"
+              strokeWidth="2"
+              strokeDasharray="5 4"
             />
           </svg>
-          <span className="text-[10px] dark:text-textSecondary text-gray-600">
-            KG relationship
+          <span className="text-[11px] dark:text-textSecondary text-gray-500">
+            Hubungan pasal
           </span>
         </div>
       </div>

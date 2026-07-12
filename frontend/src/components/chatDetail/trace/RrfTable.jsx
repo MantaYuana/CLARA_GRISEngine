@@ -25,21 +25,36 @@ const RrfTable = ({ fusion, legs }) => {
       ? legs.map((l) => l.name)
       : [...new Set(items.flatMap((it) => (it.contributions ?? []).map((c) => c.leg)))];
 
+  // Build a weight lookup: legName → weight
+  const legWeights =
+    legs && legs.length > 0
+      ? Object.fromEntries(legs.map((l) => [l.name, l.weight]))
+      : {};
+
   /**
-   * Look up the weighted contribution of a given leg for a given item.
-   * Returns a number or null if the item wasn't found by that leg.
+   * Look up the contribution of a given leg for a given item.
+   * Returns { rank, weighted } or null if the item wasn't found by that leg.
    */
   const getContrib = (item, legName) => {
     const c = (item.contributions ?? []).find((c) => c.leg === legName);
-    return c ? c.weighted : null;
+    return c ? { rank: c.rank, weighted: c.weighted } : null;
   };
+
+  // Build readable formula showing each leg's actual weight
+  const formulaParts = legNames
+    .map((name) => {
+      const w = legWeights[name];
+      return w != null ? `${w.toFixed(2)} (${name})` : name;
+    })
+    .join(" / ");
 
   return (
     <div className="flex flex-col gap-3 w-full">
       {/* Formula */}
       <div className="px-3 py-2 rounded-xl dark:bg-surfaceLight bg-gray-100 border dark:border-border border-gray-200">
         <p className="text-[11px] dark:text-textSecondary text-gray-600 font-mono">
-          weighted = 1 / ({rrfK} + rank + 1) × legWeight &nbsp;·&nbsp; rrfK ={" "}
+          per-leg rank → weighted = 1 / ({rrfK} + rank + 1) × {formulaParts}
+          &nbsp;·&nbsp; rrfK ={" "}
           <span className="dark:text-textPrimary text-gray-800 font-semibold">
             {rrfK}
           </span>
@@ -51,7 +66,7 @@ const RrfTable = ({ fusion, legs }) => {
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr className="dark:bg-surfaceLight bg-gray-100 dark:text-textSecondary text-gray-600">
-              <th className="px-2 py-2 text-left font-semibold w-8">#</th>
+              <th className="px-2 py-2 text-left font-semibold w-8" title="Fusion rank">#</th>
               <th className="px-2 py-2 text-left font-semibold">Title</th>
               {legNames.map((name) => (
                 <th
@@ -60,6 +75,11 @@ const RrfTable = ({ fusion, legs }) => {
                   style={{ color: LEG_COLORS[name] ?? "#a09aad" }}
                 >
                   {name}
+                  {legWeights[name] != null && (
+                    <span className="ml-1 opacity-60 font-normal">
+                      w={legWeights[name].toFixed(2)}
+                    </span>
+                  )}
                 </th>
               ))}
               <th className="px-2 py-2 text-right font-semibold dark:text-textPrimary text-gray-800">
@@ -89,17 +109,20 @@ const RrfTable = ({ fusion, legs }) => {
                   <span className="truncate block">{truncate(item.title, 40)}</span>
                 </td>
                 {legNames.map((name) => {
-                  const val = getContrib(item, name);
+                  const contrib = getContrib(item, name);
                   return (
                     <td
                       key={name}
-                      className="px-2 py-2 text-right font-mono"
+                      className="px-2 py-2 text-right font-mono text-[10px] leading-tight"
                       style={{
-                        color: val != null ? (LEG_COLORS[name] ?? "#a09aad") : undefined,
+                        color: contrib != null ? (LEG_COLORS[name] ?? "#a09aad") : undefined,
                       }}
                     >
-                      {val != null ? (
-                        val.toFixed(5)
+                      {contrib != null ? (
+                        <>
+                          <span className="opacity-50">R{contrib.rank}</span>
+                          <span className="ml-1">{contrib.weighted.toFixed(5)}</span>
+                        </>
                       ) : (
                         <span className="dark:text-textSecondary/30 text-gray-300">
                           —
